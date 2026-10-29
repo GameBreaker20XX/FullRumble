@@ -1,0 +1,7 @@
+# Recompiler configuration, function map and build rules live here from the
+# pipeline milestone. Generated code (generated/) and developer disc dumps
+# (private/) are git-ignored and never committed.
+generated/
+private/
+bin/
+obj/

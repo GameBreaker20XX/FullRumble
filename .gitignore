@@ -1,0 +1,28 @@
+# Disc images and saves (never committed, never shipped)
+*.bin
+*.cue
+*.iso
+*.img
+*.mdf
+*.mds
+*.chd
+*.sav
+*.mcd
+
+# Game-derived and generated output (produced on the player's machine only)
+generated/
+private/
+recompiled/
+ppc/
+
+# Build output
+bin/
+obj/
+out/
+publish/
+*.user
+
+# Local tooling
+.vs/
+.idea/
+*.log

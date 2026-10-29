@@ -1,0 +1,45 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+      - name: Check tag matches version source of truth
+        shell: pwsh
+        run: |
+          $props = Get-Content Directory.Build.props -Raw
+          $version = ([regex]'<Version>([^<]+)</Version>').Match($props).Groups[1].Value
+          $tag = "${{ github.ref_name }}"
+          if ("v$version" -ne $tag) { throw "tag $tag does not match Directory.Build.props version $version" }
+      - name: Build host (no disc present)
+        run: dotnet publish NascarRumbleRecomp -c Release -r win-x64 --self-contained true -o publish/app
+      - name: Legal lint (repository tree)
+        run: python tools/legal_lint.py .
+      - name: Stage archive
+        shell: pwsh
+        run: |
+          Compress-Archive -Path publish/app/* -DestinationPath publish/FullRumble-Windows.zip
+      - name: Legal lint (release artifacts)
+        run: python tools/legal_lint.py publish --artifacts
+      - name: SHA256SUMS
+        shell: pwsh
+        run: |
+          Get-ChildItem publish/FullRumble-Windows.zip | ForEach-Object {
+            "$((Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower())  $($_.Name)"
+          } | Set-Content publish/SHA256SUMS
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            publish/FullRumble-Windows.zip
+            publish/SHA256SUMS

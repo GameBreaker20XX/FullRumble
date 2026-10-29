@@ -1,0 +1,21 @@
+name: build
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+      - name: Build host (no disc present)
+        run: dotnet build NascarRumbleRecomp -c Release
+      - name: Legal lint
+        run: python tools/legal_lint.py .
