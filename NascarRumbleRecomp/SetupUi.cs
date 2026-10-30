@@ -25,6 +25,7 @@ internal static class SetupUi
     private const int IdLog = 111;
     private const int IdSkip = 112;
     private const int IdHint = 113;
+    private const int IdVersion = 114;
 
     private const uint WS_CHILD = 0x40000000;
     private const uint WS_VISIBLE = 0x10000000;
@@ -173,7 +174,7 @@ internal static class SetupUi
             {
                 int id = GetWindowLongPtrW(lParam, GWL_ID);
                 SetBkMode(wParam, 1);
-                SetTextColor(wParam, id == IdStatus ? StatusColor() : Rgb(242, 244, 247));
+                SetTextColor(wParam, id == IdStatus ? StatusColor() : id == IdVersion ? Rgb(154, 163, 174) : Rgb(242, 244, 247));
                 return _bgBrush;
             }
             case WM_CTLCOLORBTN:
@@ -217,6 +218,7 @@ internal static class SetupUi
         SendMessageW(GetDlgItem(hwnd, IdLog), WM_SETFONT, _font, 1);
         Button(IdSkip, "Skip for now", BS_OWNERDRAW | WS_TABSTOP);
         Static(IdHint, "You can add the disc later from this screen, or with:  FullRumble --set-disc PATH", 0, _font);
+        Static(IdVersion, $"FullRumble {Version}", 0x00000002, _font);
 
         SendMessageW(GetDlgItem(hwnd, IdShowLog), BM_SETCHECK, 1, 0);
         DragAcceptFiles(hwnd, true);
@@ -272,12 +274,13 @@ internal static class SetupUi
         Place(IdShowLog, pad, y, S(160), S(22));
         Place(IdCopyLog, pad + S(168), y - S(3), S(110), S(26)); y += S(28);
 
-        int logBottom = rc.Bottom - S(96);
+        int logBottom = rc.Bottom - S(104);
         Show(IdLog, _showLog);
         if (_showLog) Place(IdLog, pad, y, w, Math.Max(S(60), logBottom - y));
 
-        Place(IdSkip, pad, rc.Bottom - S(62), S(150), S(34));
-        Place(IdHint, pad + S(166), rc.Bottom - S(53), w - S(166), S(20));
+        Place(IdSkip, pad, rc.Bottom - S(58), S(150), S(34));
+        Place(IdHint, pad, rc.Bottom - S(86), w, S(20));
+        Place(IdVersion, rc.Right - pad - S(160), rc.Bottom - S(50), S(160), S(20));
     }
 
     private static void Place(int id, int x, int y, int w, int h) =>
@@ -408,6 +411,9 @@ internal static class SetupUi
     };
 
     private static uint Rgb(int r, int g, int b) => (uint)(r | g << 8 | b << 16);
+
+    private static string Version =>
+        System.Reflection.Assembly.GetEntryAssembly()?.GetName().Version?.ToString(3) ?? "0.0.0";
 
     private static string? OpenFile(nint owner)
     {
