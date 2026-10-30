@@ -1,5 +1,6 @@
 using System.Reflection;
 using FullRumble.Config;
+using FullRumble.Disc;
 
 string version = Assembly.GetEntryAssembly()!.GetName().Version?.ToString(3) ?? "0.0.0";
 
@@ -12,9 +13,9 @@ if (args.Length > 0 && args[0] == "--version")
 if (args.Length == 2 && args[0] == "--set-disc")
 {
     string path = Path.GetFullPath(args[1]);
-    if (!File.Exists(path))
+    if (!File.Exists(path) && !Directory.Exists(path))
     {
-        Console.Error.WriteLine($"File not found: {path}");
+        Console.Error.WriteLine($"File or folder not found: {path}");
         return 2;
     }
 
@@ -25,9 +26,37 @@ if (args.Length == 2 && args[0] == "--set-disc")
     return 0;
 }
 
+if (args.Length == 2 && args[0] == "--check-disc")
+{
+    var result = DiscValidator.Validate(Path.GetFullPath(args[1]));
+    foreach (string check in result.Checks)
+        Console.WriteLine($"  [ok] {check}");
+    Console.WriteLine(result.Status == DiscStatus.Valid ? $"VALID: {result.Message}" : $"INVALID: {result.Message}");
+    if (result.Status == DiscStatus.NeedsChoice)
+        foreach (string candidate in result.Candidates)
+            Console.WriteLine($"  candidate: {candidate}");
+    return result.Status == DiscStatus.Valid ? 0 : 1;
+}
+
+if (args.Length == 4 && args[0] == "--extract")
+{
+    try
+    {
+        byte[] bytes = DiscValidator.ExtractFile(Path.GetFullPath(args[1]), args[2]);
+        File.WriteAllBytes(args[3], bytes);
+        Console.WriteLine($"Wrote {bytes.Length} bytes to {args[3]}");
+        return 0;
+    }
+    catch (DiscValidationException error)
+    {
+        Console.Error.WriteLine(error.Message);
+        return 1;
+    }
+}
+
 if (args.Length > 0)
 {
-    Console.Error.WriteLine("usage: FullRumble [--version | --set-disc PATH]");
+    Console.Error.WriteLine("usage: FullRumble [--version | --set-disc PATH | --check-disc PATH | --extract IMAGE DISCPATH OUT]");
     return 2;
 }
 

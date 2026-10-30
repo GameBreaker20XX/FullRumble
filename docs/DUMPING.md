@@ -39,12 +39,12 @@ cooked 2048-byte `.iso`.
 
 ## Checking your dump
 
-From the milestone that introduces validation:
-
 ```
 FullRumble.exe --check-disc "path\to\nascar.cue"
 ```
 
-It prints which checks passed (container, ISO9660 volume, `SYSTEM.CNF`, executable hash) or the
-first reason the dump was refused. Until that milestone lands, the only guarantee is the one
-stated in the README: supply a dump you own; everything else happens on your machine.
+It prints each check that passed (container, ISO9660 volume, `SYSTEM.CNF`, executable hash) or
+the first reason the dump was refused, and exits non-zero on refusal. A folder works too: it is
+scanned one level deep, and if several images are found they are listed so you can pass the
+right one. `--extract IMAGE DISCPATH OUT` copies a single file out of a validated-style image
+(for example `SLUS_010.68`) so you can inspect what the validator sees.

@@ -25,7 +25,7 @@ ourselves.
   an OpenGL backend, GTE, SPU including XA audio, CD-ROM controller, MDEC, DMA, timers,
   controllers, memory cards, and an OpenBIOS-style BIOS, so no Sony BIOS is needed).
 - **Function map**: `NascarRumbleRecompLib/config/nascar_funcmap.json`, derived from the
-  MIT-licensed NASCAR Rumble ModSDK Ghidra analysis (attribution retained in LICENSE and README).
+  MIT-licensed NASCAR Rumble ModSDK Ghidra analysis (attribution retained in LICENSE).
 
 ## Data flow (target state, milestone by milestone)
 
