@@ -11,7 +11,7 @@ if (args.Length > 0 && args[0] == "--version")
     return 0;
 }
 
-if (args.Length == 2 && args[0] == "--set-disc")
+if (args.Length == 2 && (args[0] == "--set-disc" || args[0] == "--install"))
 {
     string path = Path.GetFullPath(args[1]);
     if (!File.Exists(path) && !Directory.Exists(path))
@@ -58,35 +58,30 @@ if (args.Length == 4 && args[0] == "--extract")
 if (args.Length > 0)
 {
     Console.Error.WriteLine("usage: FullRumble [--version | --set-disc PATH | --check-disc PATH | --extract IMAGE DISCPATH OUT]");
+    Console.Error.WriteLine("      --set-disc (alias --install) saves the disc path the setup screen would save.");
     return 2;
 }
 
-Console.WriteLine($"FullRumble {version} — static recompilation of NASCAR Rumble (PlayStation, SLUS-01068).");
-Console.WriteLine("This project does not include any game assets.");
-
 var loaded = UserConfig.Load();
-if (loaded.DiscPath is not { } configured)
+string? configured = loaded.DiscPath;
+DiscValidationResult? previous = null;
+string? boot = null;
+
+if (configured is not null)
 {
-    Console.WriteLine("Disc: not configured. See docs/DUMPING.md to prepare a dump from a disc you own.");
-    Console.WriteLine("Then point FullRumble at it:  FullRumble --set-disc \"path\\to\\game.cue\"");
-    return 0;
+    boot = configured;
+    if (Directory.Exists(configured))
+    {
+        var found = DiscFinder.Scan(configured);
+        if (found.Count == 1)
+            boot = found[0];
+    }
+
+    previous = DiscValidator.Validate(boot);
+    if (previous.Status == DiscStatus.Valid)
+        return GameBoot.Run(boot);
 }
 
-string boot = configured;
-if (Directory.Exists(configured))
-{
-    var found = DiscFinder.Scan(configured);
-    if (found.Count == 1)
-        boot = found[0];
-}
-
-var validation = DiscValidator.Validate(boot);
-if (validation.Status != DiscStatus.Valid)
-{
-    Console.Error.WriteLine($"Disc not valid: {validation.Message}");
-    Console.Error.WriteLine("Fix the dump, or choose another with:  FullRumble --set-disc PATH");
-    return 1;
-}
-Console.WriteLine($"Disc configured: {boot}");
-
-return GameBoot.Run(boot);
+GameBoot.HideConsole();
+string? chosen = SetupUi.Run(configured, previous);
+return chosen is null ? 0 : GameBoot.Run(chosen);

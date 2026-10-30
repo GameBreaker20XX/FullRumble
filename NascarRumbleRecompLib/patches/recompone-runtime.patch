@@ -939,7 +939,17 @@ index bcefd60..e811845 100644
      
      public static Config.ViewConfig View => Config.ConfigManager.View;
      public static void SaveView() => Config.ConfigManager.SaveView(Host.Window.PanelManager.Panels);
-@@ -39,7 +70,55 @@ public static class Runtime
+@@ -30,6 +49,9 @@ public static class Runtime
++    static bool _initialized;
+     public static void Initialize(string title)
+     {
++        if (_initialized) return;
++        _initialized = true;
+         Diagnostics.ConsoleMirror.Install();
+         HostWindow.Initialize(title);
+         Audio.Initialize();
+         Audio.SetMasterVolume(Config.ConfigManager.Game.Muted ? 0f : Config.ConfigManager.Game.MasterVolume);
+@@ -39,7 +73,55 @@ public static class Runtime
          }
      }
  
@@ -996,7 +1006,7 @@ index bcefd60..e811845 100644
      
      public static void ShowNotice(string message) => Host.Window.NoticePopup.Show(message);
      public static void SetStartupNotice(string message, string title = "Notice", string ackKey = "StartupNoticeAck") => Host.Window.StartupNotice.Set(message, title, ackKey);
-@@ -56,10 +135,22 @@ public static class Runtime
+@@ -56,10 +138,22 @@ public static class Runtime
          Audio.Attach(Spu);
          FrameClock.Throttle();
          Sdk.LibCd.Tick();

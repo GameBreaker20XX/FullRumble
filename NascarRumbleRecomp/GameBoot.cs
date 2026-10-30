@@ -24,6 +24,13 @@ internal static class GameBoot
     [DllImport("user32.dll")]
     private static extern bool ShowWindow(nint hWnd, int nCmdShow);
 
+    public static void HideConsole()
+    {
+        nint console = GetConsoleWindow();
+        if (console != 0)
+            ShowWindow(console, SW_HIDE);
+    }
+
     public static int Run(string cuePath)
     {
         string libraryPath = Path.Combine(AppContext.BaseDirectory, LibraryFile);
