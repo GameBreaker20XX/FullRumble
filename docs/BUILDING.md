@@ -1,8 +1,8 @@
 # Building FullRumble
 
-The build succeeds with **no disc present**. Game-derived code is generated later, on the
-machine that owns the dump; see [Step: recompile pipeline](#the-recompile-pipeline) once that
-milestone lands (it is documented in this file from the milestone that introduces it).
+The host build succeeds with **no disc present**. Game-derived code is generated later, on the
+machine that owns the dump, by [the recompile pipeline](#the-recompile-pipeline); it lands in the
+git-ignored `NascarRumbleRecompLib/generated/` folder and is never committed or released.
 
 ## Requirements
 
@@ -59,5 +59,44 @@ trigger SmartScreen; a digest match against the Releases page is the check that 
 
 ## The recompile pipeline
 
-Documented here from the milestone that introduces it. Until then, this section intentionally
-does not exist further down: the pipeline is not in this tree yet.
+The host (`NascarRumbleRecomp`) and the game library (`NascarRumbleRecompLib`) are separate
+projects. The host builds and runs without a disc; the library holds the recompiled game and is
+produced **on your machine, from a disc you own**. Nothing generated is committed or released.
+
+### Developer path (command line)
+
+1. Put your dump in the git-ignored `NascarRumbleRecompLib/private/` folder (one level deep is
+   scanned), or pass it explicitly with `--cue`. Accepted: a `.cue`+`.bin` pair, a raw 2352-byte
+   `.bin`, or a cooked 2048-byte `.iso`. See [DUMPING.md](DUMPING.md).
+2. Run the pipeline:
+
+   ```
+   python tools/build_lib.py                       # uses private/
+   python tools/build_lib.py --cue "path\to\game.cue"
+   ```
+
+The script:
+
+- validates the disc with the host (`FullRumble.exe --check-disc`): ISO9660 volume, `SYSTEM.CNF`
+  boot id `SLUS-01068`, and the pinned SHA-256 of `SLUS_010.68`. It refuses to recompile an
+  invalid or unknown disc;
+- checks out the pinned RecompOne submodule commit (`NascarRumbleRecompLib/recompone.lock.json`)
+  and applies `NascarRumbleRecompLib/patches/recompone-runtime.patch` to its working tree (the
+  submodule commit itself is never modified);
+- builds `RecompOne.Recompiler`, then runs it over the disc using the merged build config in
+  `generated/nascar.build.json` and the function map `config/nascar_funcmap.json`;
+- re-runs the recompiler up to six times, each time adding any literal dispatcher targets that
+  `tools/augment_funcmap.py` finds missing from the function map, until it converges;
+- builds `NascarRumbleRecompLib.dll` from `src/` plus the generated `generated/Recompiled/*.cs`.
+
+Generated C# lands in `NascarRumbleRecompLib/generated/` (about 6-7 MB, git-ignored). A successful
+run prints `PASS - NascarRumbleRecompLib.dll built from <disc>`. The generated code compiles with
+roughly 53 `CS0162` "unreachable code" warnings; these come from the recompiler's output and are
+expected, not errors.
+
+### Player path (setup screen)
+
+The same stages will run from the first-run setup screen (add a file or folder, watch the progress
+log, get a `Valid SLUS-01068` badge) so a player never touches the command line. That screen is a
+later milestone; until it lands, use the developer path above.
+

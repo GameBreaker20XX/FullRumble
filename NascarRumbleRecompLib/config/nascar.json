@@ -1,0 +1,231 @@
+{
+ "game": {
+  "name": "NASCAR Rumble (USA)",
+  "region": "NTSC-U"
+ },
+ "cue": "",
+ "funcMap": "nascar_funcmap.json",
+ "main": "800a5440",
+ "linearSweep": false,
+ "overlays": [],
+ "stubs": [],
+ "ignored": [],
+ "patches": [
+  {
+   "overlay": "main",
+   "function": "FUN_8001f560",
+   "target": "NascarRumble.Host.NativeHooks.MemoryCardPoll",
+   "mode": "post"
+  },
+  {
+   "overlay": "main",
+   "function": "CD_sync",
+   "target": "RecompOne.Runtime.Sdk.LibCd.CdSync",
+   "mode": "replace"
+  },
+  {
+   "overlay": "main",
+   "function": "CD_ready",
+   "target": "NascarRumble.Host.NativeHooks.CdReady",
+   "mode": "replace"
+  },
+  {
+   "overlay": "main",
+   "function": "FUN_8001a24c",
+   "target": "NascarRumble.Host.NativeHooks.FrameSubmitted",
+   "mode": "post"
+  },
+  {
+   "overlay": "main",
+   "function": "FUN_800285e4",
+   "target": "NascarRumble.Host.NativeHooks.FrontendFrameWait",
+   "mode": "pre"
+  },
+  {
+   "overlay": "main",
+   "function": "FUN_8007a994",
+   "target": "NascarRumble.Host.NativeHooks.FrontendUpdateEnter",
+   "mode": "pre"
+  },
+  {
+   "overlay": "main",
+   "function": "FUN_8007a994",
+   "target": "NascarRumble.Host.NativeHooks.FrontendUpdateExit",
+   "mode": "post"
+  },
+  {
+   "overlay": "main",
+   "function": "FUN_800269c0",
+   "target": "NascarRumble.Host.NativeHooks.RaceTimingEnter",
+   "mode": "pre"
+  },
+  {
+   "overlay": "main",
+   "function": "FUN_800269c0",
+   "target": "NascarRumble.Host.NativeHooks.RaceTimingTrace",
+   "mode": "post"
+  },
+  {
+   "overlay": "main",
+   "function": "FUN_80056c6c",
+   "target": "NascarRumble.Host.NativeHooks.VehicleStateTrace",
+   "mode": "post"
+  },
+  {
+   "overlay": "main",
+   "function": "FUN_80096e90",
+   "target": "NascarRumble.Host.NativeHooks.IntroAudioPoll",
+   "mode": "pre"
+  },
+  {
+   "overlay": "main",
+   "function": "FUN_80064acc",
+   "target": "NascarRumble.Host.NativeHooks.ShadowPre80064acc",
+   "mode": "pre"
+  },
+  {
+   "overlay": "main",
+   "function": "FUN_80064acc",
+   "target": "NascarRumble.Host.NativeHooks.ShadowPost80064acc",
+   "mode": "post"
+  },
+  {
+   "overlay": "main",
+   "function": "FUN_80065488",
+   "target": "NascarRumble.Host.NativeHooks.ShadowPre80065488",
+   "mode": "pre"
+  },
+  {
+   "overlay": "main",
+   "function": "FUN_80065488",
+   "target": "NascarRumble.Host.NativeHooks.ShadowPost80065488",
+   "mode": "post"
+  },
+  {
+   "overlay": "main",
+   "function": "FUN_80056c6c",
+   "target": "NascarRumble.Host.NativeHooks.ShadowPre80056c6c",
+   "mode": "pre"
+  },
+  {
+   "overlay": "main",
+   "function": "FUN_80026d3c",
+   "target": "NascarRumble.Host.DtProbe.VehicleStepPre",
+   "mode": "pre"
+  },
+  {
+   "overlay": "main",
+   "function": "_card_info",
+   "target": "NascarRumble.Host.CardTrace.CardInfo",
+   "mode": "pre"
+  },
+  {
+   "overlay": "main",
+   "function": "_card_load",
+   "target": "NascarRumble.Host.CardTrace.CardLoad",
+   "mode": "pre"
+  },
+  {
+   "overlay": "main",
+   "function": "_card_read",
+   "target": "NascarRumble.Host.CardTrace.CardRead",
+   "mode": "pre"
+  },
+  {
+   "overlay": "main",
+   "function": "_card_write",
+   "target": "NascarRumble.Host.CardTrace.CardWrite",
+   "mode": "pre"
+  },
+  {
+   "overlay": "main",
+   "function": "_card_clear",
+   "target": "NascarRumble.Host.CardTrace.CardClear",
+   "mode": "pre"
+  },
+  {
+   "overlay": "main",
+   "function": "memory_card_event_callback_0",
+   "target": "NascarRumble.Host.CardTrace.HwIoe",
+   "mode": "pre"
+  },
+  {
+   "overlay": "main",
+   "function": "memory_card_event_callback_1",
+   "target": "NascarRumble.Host.CardTrace.HwNew",
+   "mode": "pre"
+  },
+  {
+   "overlay": "main",
+   "function": "memory_card_event_callback_2",
+   "target": "NascarRumble.Host.CardTrace.HwTimeout",
+   "mode": "pre"
+  },
+  {
+   "overlay": "main",
+   "function": "memory_card_event_callback_3",
+   "target": "NascarRumble.Host.CardTrace.HwError",
+   "mode": "pre"
+  },
+  {
+   "overlay": "main",
+   "function": "memory_card_event_callback_4",
+   "target": "NascarRumble.Host.CardTrace.SwIoe",
+   "mode": "pre"
+  },
+  {
+   "overlay": "main",
+   "function": "memory_card_event_callback_5",
+   "target": "NascarRumble.Host.CardTrace.SwNew",
+   "mode": "pre"
+  },
+  {
+   "overlay": "main",
+   "function": "memory_card_event_callback_6",
+   "target": "NascarRumble.Host.CardTrace.SwTimeout",
+   "mode": "pre"
+  },
+  {
+   "overlay": "main",
+   "function": "memory_card_event_callback_7",
+   "target": "NascarRumble.Host.CardTrace.SwError",
+   "mode": "pre"
+  },
+  {
+   "overlay": "main",
+   "function": "memory_card_event_callback_8",
+   "target": "NascarRumble.Host.CardTrace.Watchdog",
+   "mode": "pre"
+  },
+  {
+   "overlay": "main",
+   "function": "FUN_8001df64",
+   "target": "NascarRumble.Host.CardTrace.RequestRead",
+   "mode": "pre"
+  },
+  {
+   "overlay": "main",
+   "function": "FUN_8001dff8",
+   "target": "NascarRumble.Host.CardTrace.RequestWrite",
+   "mode": "pre"
+  },
+  {
+   "overlay": "main",
+   "function": "FUN_8001e08c",
+   "target": "NascarRumble.Host.CardTrace.RequestCreate",
+   "mode": "pre"
+  },
+  {
+   "overlay": "main",
+   "function": "FUN_8001f47c",
+   "target": "NascarRumble.Host.CardTrace.Open",
+   "mode": "pre"
+  },
+  {
+   "overlay": "main",
+   "function": "FUN_8001f538",
+   "target": "NascarRumble.Host.CardTrace.Close",
+   "mode": "pre"
+  }
+ ]
+}

@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <AssemblyName>NascarRumbleRecompLib</AssemblyName>
+    <RootNamespace>NascarRumble</RootNamespace>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="src/**/*.cs" />
+    <Compile Include="generated/**/*.cs" Condition="Exists('generated/Recompiled/main.cs')" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../thirdparty/RecompOne/RecompOne.Runtime/RecompOne.Runtime.csproj" />
+  </ItemGroup>
+
+</Project>

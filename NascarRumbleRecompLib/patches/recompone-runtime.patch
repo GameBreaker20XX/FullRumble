@@ -1,0 +1,1111 @@
+diff --git a/RecompOne.Recompiler/CodeGen/EntryWriter.cs b/RecompOne.Recompiler/CodeGen/EntryWriter.cs
+index 5206d73..05d72f1 100644
+--- a/RecompOne.Recompiler/CodeGen/EntryWriter.cs
++++ b/RecompOne.Recompiler/CodeGen/EntryWriter.cs
+@@ -21,13 +21,14 @@ public static class EntryWriter
+         entry.AppendLine("    public static void Run(IMemory m, string? cuePath = null)");
+         entry.AppendLine("    {");
+         entry.AppendLine($"        RecompOne.Runtime.Runtime.Initialize(\"{className}\");");
+-        entry.AppendLine("        RecompOne.Runtime.Runtime.WaitForValidDisc();");
++        entry.AppendLine("        RecompOne.Runtime.Runtime.WaitForValidDisc(cuePath);");
+         entry.AppendLine("        using var fs = CueFs.Open(cuePath ?? RecompOne.Runtime.Runtime.CdPath);");
+         entry.AppendLine("        var cd = new CdController(fs, m);");
+         entry.AppendLine("        m.SetCd(cd);");
+         foreach (var name in overlays)
+             entry.AppendLine($"        Dispatcher.Register(\"{name}\", new {DispatchTableName(name)}());");
+-        entry.AppendLine("        RecompOne.Runtime.Modding.ModLoader.LoadAll();");
++        entry.AppendLine("        if (Environment.GetEnvironmentVariable(\"RUMBLE_ENABLE_MODS\") == \"1\")");
++        entry.AppendLine("            RecompOne.Runtime.Modding.ModLoader.LoadAll();");
+         entry.AppendLine($"        cd.LoadToMemory(\"{bootExe}\", 0x{exe.Destination:X8}u, 0x800, {exe.TextSize});");
+         entry.AppendLine("        Dispatcher.Load(\"main\");");
+         entry.AppendLine("        var c = new CpuContext();");
+diff --git a/RecompOne.Runtime/Bios/BiosA.cs b/RecompOne.Runtime/Bios/BiosA.cs
+index 997d8c6..6c1796f 100644
+--- a/RecompOne.Runtime/Bios/BiosA.cs
++++ b/RecompOne.Runtime/Bios/BiosA.cs
+@@ -415,8 +415,8 @@ public static class BiosA
+                 break;
+             }
+             case 0xA6: c.V0 = _cd != null ? _cd.DriveStatusByte() : 0x02u; break;
+-            case 0xAB: BiosB.CardComplete(c, m, c.A0); c.V0 = 1u; break;
+-            case 0xAC: BiosB.CardComplete(c, m, c.A0); c.V0 = 1u; break;
++            case 0xAB: c.V0 = BiosB.CardInfo(c, m, c.A0) ? 1u : 0u; break;
++            case 0xAC: c.V0 = BiosB.CardLoad(c, m, c.A0) ? 1u : 0u; break;
+             case 0xA7: case 0xA8: case 0xA9: case 0xAA:
+             case 0xAD: case 0xAE: case 0xAF: break;
+             case 0xB4:
+diff --git a/RecompOne.Runtime/Bios/BiosB.cs b/RecompOne.Runtime/Bios/BiosB.cs
+index f5935c8..2e7602e 100644
+--- a/RecompOne.Runtime/Bios/BiosB.cs
++++ b/RecompOne.Runtime/Bios/BiosB.cs
+@@ -19,6 +19,15 @@ public static class BiosB
+     public static uint IntrEnvInInterruptAddr = 0u;
+ 
+     static uint _padBuf;
++    // Completion of one card operation. The BIOS reports the low-level sector transfer as a HwCARD
++    // event; the higher-level _card_info/_card_load also report a SwCARD event, delivered first.
++    // Sector reads/writes complete one per frame (TickCard): a console transfer takes milliseconds,
++    // and games detect the end of a load or save by seeing their busy status between polls.
++    readonly record struct CardCompletion(uint Port, uint? Spec, bool Software, bool Immediate);
++    static readonly Queue<CardCompletion> _pendingCardCompletions = new();
++    static readonly bool[] _cardKnown = new bool[2];
++    static readonly bool[] _cardInitialized = new bool[2];
++    static bool _deliveringCardCompletion;
+ 
+     public static void DeliverEvent(uint @class, uint spec)
+     {
+@@ -45,38 +54,97 @@ public static class BiosB
+         }
+     }
+     
+-    public static void CardComplete(CpuContext c, IMemory m, uint port)
++    static void DeliverCardCompletion(CpuContext c, IMemory m, CardCompletion completion)
+     {
+-        var card = (port & 0x10u) != 0 ? Runtime.CardB : Runtime.CardA;
+-        uint spec = card.Enabled ? 0x0004u : 0x0100u;
+-        
+-        DeliverEventIntr(c, m, 0xF4000001u, spec);
++        var card = (completion.Port & 0x10u) != 0 ? Runtime.CardB : Runtime.CardA;
++        uint spec = completion.Spec ?? (card.Enabled ? 0x0004u : 0x0100u);
++        if (completion.Software) DeliverEventIntr(c, m, 0xF4000001u, spec);
+         DeliverEventIntr(c, m, 0xF0000011u, spec);
+     }
+ 
++    public static void CardComplete(CpuContext c, IMemory m, uint port, uint? requestedSpec = null,
++        bool immediate = true, bool software = true)
++    {
++        _pendingCardCompletions.Enqueue(new CardCompletion(port, requestedSpec, software, immediate));
++        if (!immediate || _deliveringCardCompletion) return;
++
++        _deliveringCardCompletion = true;
++        try
++        {
++            int guard = 0;
++            while (_pendingCardCompletions.Count != 0 && _pendingCardCompletions.Peek().Immediate && guard++ < 128)
++                DeliverCardCompletion(c, m, _pendingCardCompletions.Dequeue());
++        }
++        finally
++        {
++            _deliveringCardCompletion = false;
++        }
++    }
++
++    public static void TickCard(IMemory m)
++    {
++        var c = Runtime.Cpu;
++        if (c == null || _pendingCardCompletions.Count == 0) return;
++        DeliverCardCompletion(c, m, _pendingCardCompletions.Dequeue());
++    }
++
++    static bool CardBusy(int slot)
++    {
++        foreach (var pending in _pendingCardCompletions)
++            if (((pending.Port & 0x10u) != 0 ? 1 : 0) == slot) return true;
++        return false;
++    }
++
++    /// <summary>
++    /// A(ABh) _card_info. Like the console BIOS, it is refused (returns false, no events) while the
++    /// port still has an operation in flight; games that re-issue it from both the SwCARD and HwCARD
++    /// callbacks rely on the second request being dropped.
++    /// </summary>
++    public static bool CardInfo(CpuContext c, IMemory m, uint port)
++    {
++        int slot = (port & 0x10u) != 0 ? 1 : 0;
++        if (CardBusy(slot)) return false;
++        var card = slot == 1 ? Runtime.CardB : Runtime.CardA;
++        uint spec = !card.Enabled ? 0x0100u : _cardKnown[slot] ? 0x0004u : 0x2000u;
++        _cardKnown[slot] = card.Enabled;
++        CardComplete(c, m, port, spec, immediate: !_cardInitialized[slot]);
++        return true;
++    }
++
++    public static bool CardLoad(CpuContext c, IMemory m, uint port)
++    {
++        int slot = (port & 0x10u) != 0 ? 1 : 0;
++        if (CardBusy(slot)) return false;
++        CardComplete(c, m, port);
++        return true;
++    }
++
+     static void CardRead(CpuContext c, IMemory m)
+     {
+-        var card = (c.A0 & 0x10u) != 0 ? Runtime.CardB : Runtime.CardA;
++        int slot = (c.A0 & 0x10u) != 0 ? 1 : 0;
++        var card = slot == 1 ? Runtime.CardB : Runtime.CardA;
+         if (card.Enabled && c.A2 != 0u)
+         {
+             Span<byte> f = stackalloc byte[0x80];
+             card.FrameRead((int)(c.A1 & 0x3FFu), f);
+             for (uint i = 0; i < 0x80u; i++) m.WriteU8(c.A2 + i, f[(int)i]);
+         }
+-        CardComplete(c, m, c.A0);
++        _cardInitialized[slot] = true;
++        CardComplete(c, m, c.A0, immediate: false, software: false);
+         c.V0 = 1u;
+     }
+ 
+     static void CardWrite(CpuContext c, IMemory m)
+     {
+-        var card = (c.A0 & 0x10u) != 0 ? Runtime.CardB : Runtime.CardA;
++        int slot = (c.A0 & 0x10u) != 0 ? 1 : 0;
++        var card = slot == 1 ? Runtime.CardB : Runtime.CardA;
+         if (card.Enabled && c.A2 != 0u)
+         {
+             Span<byte> f = stackalloc byte[0x80];
+             for (uint i = 0; i < 0x80u; i++) f[(int)i] = m.ReadU8(c.A2 + i);
+             card.FrameWrite((int)(c.A1 & 0x3FFu), f);
+         }
+-        CardComplete(c, m, c.A0);
++        CardComplete(c, m, c.A0, immediate: false, software: false);
+         c.V0 = 1u;
+     }
+ 
+diff --git a/RecompOne.Runtime/Cdrom/CdController.cs b/RecompOne.Runtime/Cdrom/CdController.cs
+index 18deeb2..841e9de 100644
+--- a/RecompOne.Runtime/Cdrom/CdController.cs
++++ b/RecompOne.Runtime/Cdrom/CdController.cs
+@@ -186,7 +186,7 @@ public sealed class CdController
+             case 3:
+                 if (_index == 0)
+                 {
+-                    if ((val & 0x80) != 0) { _dataFifoPos = 0; _dataReady = true; }
++                    if ((val & 0x80) != 0) _dataReady = true;
+                     else _dataReady = false;
+                 }
+                 else if (_index == 1)
+diff --git a/RecompOne.Runtime/Gpu/Hle/Gl/GlBackend.cs b/RecompOne.Runtime/Gpu/Hle/Gl/GlBackend.cs
+index c3792b6..1461bd0 100644
+--- a/RecompOne.Runtime/Gpu/Hle/Gl/GlBackend.cs
++++ b/RecompOne.Runtime/Gpu/Hle/Gl/GlBackend.cs
+@@ -36,6 +36,50 @@ public sealed class GlBackend : IGpuBackend
+ 
+     public bool Ready { get; private set; }
+ 
++    // Feedback tracking for the texture barrier. macOS has no glTextureBarrier, and its glFinish
++    // fallback stalls the CPU on every batch, so only synchronise when a batch can actually read
++    // VRAM texels (texture/CLUT or the mask bit) that an earlier draw wrote since the last barrier.
++    bool _vramDirty;
++    int _vdX0, _vdY0, _vdX1, _vdY1;
++    bool _batchReads;
++    int _brX0, _brY0, _brX1, _brY1;
++    readonly HashSet<GlDisplayRt> _rtDirty = new();
++
++    static bool Overlaps(int ax0, int ay0, int ax1, int ay1, int bx0, int by0, int bx1, int by1)
++        => ax0 <= bx1 && bx0 <= ax1 && ay0 <= by1 && by0 <= ay1;
++
++    void MarkVramDirty(int x0, int y0, int x1, int y1)
++    {
++        if (!_vramDirty) { _vramDirty = true; _vdX0 = x0; _vdY0 = y0; _vdX1 = x1; _vdY1 = y1; return; }
++        _vdX0 = Math.Min(_vdX0, x0); _vdY0 = Math.Min(_vdY0, y0);
++        _vdX1 = Math.Max(_vdX1, x1); _vdY1 = Math.Max(_vdY1, y1);
++    }
++
++    void AddBatchRead(int x, int y, int w, int h)
++    {
++        int x0 = x, y0 = y, x1 = x + w - 1, y1 = y + h - 1;
++        if (x1 > 1023) { x0 = 0; x1 = 1023; }
++        if (y1 > 511) { y0 = 0; y1 = 511; }
++        if (!_batchReads) { _batchReads = true; _brX0 = x0; _brY0 = y0; _brX1 = x1; _brY1 = y1; return; }
++        _brX0 = Math.Min(_brX0, x0); _brY0 = Math.Min(_brY0, y0);
++        _brX1 = Math.Max(_brX1, x1); _brY1 = Math.Max(_brY1, y1);
++    }
++
++    void TrackTextureRead(in PrimFlags f)
++    {
++        if (!f.Textured) return;
++        int depth = (f.TPage >> 7) & 3;
++        AddBatchRead((f.TPage & 0xF) * 64, ((f.TPage >> 4) & 1) * 256, depth == 0 ? 64 : depth == 1 ? 128 : 256, 256);
++        if (depth < 2) AddBatchRead((f.Clut & 0x3F) * 16, (f.Clut >> 6) & 0x1FF, depth == 0 ? 16 : 256, 1);
++    }
++
++    void SyncBarrier()
++    {
++        _vram.Barrier();
++        _vramDirty = false;
++        _rtDirty.Clear();
++    }
++
+     public GlBackend(GL gl) { _gl = gl; _vram = new GlVram(gl); }
+ 
+     public unsafe void InitGl()
+@@ -189,6 +233,7 @@ public sealed class GlBackend : IGpuBackend
+             ClearBufferMask.ColorBufferBit, BlitFramebufferFilter.Nearest);
+         _gl.BindFramebuffer(FramebufferTarget.Framebuffer, 0);
+         rt.Dirty = false;
++        MarkVramDirty(rt.X, rt.Y, rt.X + rt.W - 1, rt.Y + rt.H - 1);
+     }
+ 
+     void SyncRtFromVram(GlDisplayRt rt, int rx, int ry, int rw, int rh)
+@@ -204,6 +249,7 @@ public sealed class GlBackend : IGpuBackend
+             (x0 - rt.X + rt.Margin) * s, (y0 - rt.Y) * s, (x1 - rt.X + rt.Margin) * s, (y1 - rt.Y) * s,
+             ClearBufferMask.ColorBufferBit, BlitFramebufferFilter.Nearest);
+         _gl.BindFramebuffer(FramebufferTarget.Framebuffer, 0);
++        _rtDirty.Add(rt);
+     }
+ 
+     void WritebackDirtyIntersecting(int x, int y, int w, int h)
+@@ -251,6 +297,7 @@ public sealed class GlBackend : IGpuBackend
+         if (_count > 0 && (target != _kTarget || !DesiredMatches(transparent, blend))) Flush();
+         if (_count + vertsNeeded > MaxVerts) Flush();
+         CheckTextureFeedback(f);
++        TrackTextureRead(f);
+ 
+         _kTarget = target;
+         _kTransparent = transparent; _kBlend = blend;
+@@ -328,6 +375,7 @@ public sealed class GlBackend : IGpuBackend
+     {
+         Flush();
+         _vram.Fill(x, y, w, h, color15);
++        MarkVramDirty(x, y, x + w - 1, y + h - 1);
+         foreach (var rt in _rts)
+         {
+             if (rt == null || !rt.Intersects(x, y, w, h)) continue;
+@@ -357,6 +405,7 @@ public sealed class GlBackend : IGpuBackend
+         Flush();
+         WritebackDirtyIntersecting(sx, sy, w, h);
+         _vram.CopyRect(sx, sy, dx, dy, w, h);
++        MarkVramDirty(dx, dy, dx + w - 1, dy + h - 1);
+         SyncRtsFromVram(dx, dy, w, h);
+     }
+ 
+@@ -364,6 +413,7 @@ public sealed class GlBackend : IGpuBackend
+     {
+         Flush();
+         _vram.WriteRect(x, y, w, h, px);
++        MarkVramDirty(x, y, x + w - 1, y + h - 1);
+         SyncRtsFromVram(x, y, w, h);
+     }
+ 
+@@ -391,7 +441,11 @@ public sealed class GlBackend : IGpuBackend
+             _gl.Viewport(0, 0, (uint)rt.TexW, (uint)rt.TexH);
+             destTex = rt.Tex;
+         }
+-        _vram.Barrier();
++        bool needBarrier = rt == null
++            ? _vramDirty && ((_kCheckMask != 0 && Overlaps(_vdX0, _vdY0, _vdX1, _vdY1, _kClipX0, _kClipY0, _kClipX1, _kClipY1))
++                || (_batchReads && Overlaps(_vdX0, _vdY0, _vdX1, _vdY1, _brX0, _brY0, _brX1, _brY1)))
++            : _kCheckMask != 0 && _rtDirty.Contains(rt);
++        if (needBarrier) SyncBarrier();
+ 
+         _gl.Disable(EnableCap.DepthTest);
+         _gl.Disable(EnableCap.CullFace);
+@@ -433,7 +487,10 @@ public sealed class GlBackend : IGpuBackend
+         _gl.Uniform4(_uBlendOpaque, 1f, 1f, 1f, 0f);
+ 
+         _gl.BindBuffer(BufferTargetARB.ArrayBuffer, _vbo);
+-        _gl.BufferSubData<GlVertex>(BufferTargetARB.ArrayBuffer, 0, _verts.AsSpan(0, _count));
++        // Respecify instead of updating in place: rewriting a buffer the previous batch still reads
++        // makes Apple's GL-on-Metal driver flush and wait on every batch.
++        fixed (GlVertex* vp = _verts)
++            _gl.BufferData(BufferTargetARB.ArrayBuffer, (nuint)(_count * sizeof(GlVertex)), vp, BufferUsageARB.StreamDraw);
+ 
+         if (!_kTransparent)
+         {
+@@ -450,7 +507,7 @@ public sealed class GlBackend : IGpuBackend
+                 SetBlend(0f, 1f);
+                 _gl.DrawArrays(PrimitiveType.Triangles, 0, (uint)_count);
+ 
+-                _vram.Barrier();
++                if (_kCheckMask != 0) SyncBarrier();
+                 _gl.BlendEquationSeparate(BlendEquationModeEXT.FuncReverseSubtract, BlendEquationModeEXT.FuncAdd);
+                 SetBlend(1f, 1f);
+                 _gl.Uniform4(_uBlendOpaque, 0f, 0f, 0f, 1f);
+@@ -465,7 +522,9 @@ public sealed class GlBackend : IGpuBackend
+         }
+ 
+         _gl.Disable(EnableCap.ScissorTest);
+-        if (rt != null) { rt.Dirty = true; rt.LastDrawFrame = _frame; }
++        if (rt != null) { rt.Dirty = true; rt.LastDrawFrame = _frame; _rtDirty.Add(rt); }
++        else MarkVramDirty(_kClipX0, _kClipY0, _kClipX1, _kClipY1);
++        _batchReads = false;
+         _count = 0;
+     }
+ 
+@@ -507,7 +566,7 @@ public sealed class GlBackend : IGpuBackend
+         int presentScale = GpuHle.NativeResolution ? 1 : GlVram.Scale;
+         int fbW = w1x * presentScale;
+         int fbH = h1x * presentScale;
+-        EnsurePresentSize(fbW, fbH, GpuHle.NativeResolution);
++        EnsurePresentSize(fbW, fbH, nearest: !GpuHle.SmoothScaling);
+ 
+         _gl.BindFramebuffer(FramebufferTarget.Framebuffer, _presentFbo);
+         _gl.Viewport(0, 0, (uint)fbW, (uint)fbH);
+diff --git a/RecompOne.Runtime/Gpu/Hle/Gl/GlVram.cs b/RecompOne.Runtime/Gpu/Hle/Gl/GlVram.cs
+index 169e2b3..bd77e49 100644
+--- a/RecompOne.Runtime/Gpu/Hle/Gl/GlVram.cs
++++ b/RecompOne.Runtime/Gpu/Hle/Gl/GlVram.cs
+@@ -11,7 +11,7 @@ public sealed class GlVram
+     readonly GL _gl;
+     uint _tex, _fbo;
+     uint _stageTex, _stageFbo;
+-    uint _scratchTex;
++    uint _scratchTex, _scratchFbo;
+ 
+     public uint Texture => _tex;
+     public uint Fbo => _fbo;
+@@ -55,7 +55,17 @@ public sealed class GlVram
+         _gl.Viewport(0, 0, (uint)Width, (uint)Height);
+     }
+ 
+-    public void Barrier() => _gl.TextureBarrier();
++    public void Barrier()
++    {
++        if (OperatingSystem.IsMacOS())
++        {
++            // macOS stops at OpenGL 4.1 and does not expose glTextureBarrier (4.5).
++            // Finish is conservative, but keeps the first native boot path functional.
++            _gl.Finish();
++            return;
++        }
++        _gl.TextureBarrier();
++    }
+ 
+     public void WriteRect(int x, int y, int w, int h, ReadOnlySpan<ushort> px)
+     {
+@@ -90,6 +100,11 @@ public sealed class GlVram
+     {
+         int sw = w * Scale, sh = h * Scale;
+         bool overlap = sx < dx + w && dx < sx + w && sy < dy + h && dy < sy + h;
++        if (OperatingSystem.IsMacOS())
++        {
++            CopyRectWithFramebuffer(sx * Scale, sy * Scale, dx * Scale, dy * Scale, sw, sh, overlap);
++            return;
++        }
+         if (!overlap)
+         {
+             _gl.CopyImageSubData(_tex, CopyImageSubDataTarget.Texture2D, 0, sx * Scale, sy * Scale, 0,
+@@ -122,12 +137,39 @@ public sealed class GlVram
+     {
+         if (_scratchTex != 0) return;
+         _scratchTex = CreateTex(Width, Height);
++        _scratchFbo = CreateFbo(_scratchTex);
++    }
++
++    void CopyRectWithFramebuffer(int sx, int sy, int dx, int dy, int w, int h, bool overlap)
++    {
++        _gl.Disable(EnableCap.ScissorTest);
++        if (overlap)
++        {
++            EnsureScratch();
++            _gl.BindFramebuffer(FramebufferTarget.ReadFramebuffer, _fbo);
++            _gl.BindFramebuffer(FramebufferTarget.DrawFramebuffer, _scratchFbo);
++            _gl.BlitFramebuffer(sx, sy, sx + w, sy + h, 0, 0, w, h,
++                ClearBufferMask.ColorBufferBit, BlitFramebufferFilter.Nearest);
++            _gl.BindFramebuffer(FramebufferTarget.ReadFramebuffer, _scratchFbo);
++            _gl.BindFramebuffer(FramebufferTarget.DrawFramebuffer, _fbo);
++            _gl.BlitFramebuffer(0, 0, w, h, dx, dy, dx + w, dy + h,
++                ClearBufferMask.ColorBufferBit, BlitFramebufferFilter.Nearest);
++        }
++        else
++        {
++            _gl.BindFramebuffer(FramebufferTarget.ReadFramebuffer, _fbo);
++            _gl.BindFramebuffer(FramebufferTarget.DrawFramebuffer, _fbo);
++            _gl.BlitFramebuffer(sx, sy, sx + w, sy + h, dx, dy, dx + w, dy + h,
++                ClearBufferMask.ColorBufferBit, BlitFramebufferFilter.Nearest);
++        }
++        _gl.BindFramebuffer(FramebufferTarget.Framebuffer, _fbo);
+     }
+ 
+     public void Dispose()
+     {
+         if (_fbo != 0) _gl.DeleteFramebuffer(_fbo);
+         if (_stageFbo != 0) _gl.DeleteFramebuffer(_stageFbo);
++        if (_scratchFbo != 0) _gl.DeleteFramebuffer(_scratchFbo);
+         if (_tex != 0) _gl.DeleteTexture(_tex);
+         if (_stageTex != 0) _gl.DeleteTexture(_stageTex);
+         if (_scratchTex != 0) _gl.DeleteTexture(_scratchTex);
+diff --git a/RecompOne.Runtime/Gpu/Hle/GpuHle.cs b/RecompOne.Runtime/Gpu/Hle/GpuHle.cs
+index 1686721..797bca9 100644
+--- a/RecompOne.Runtime/Gpu/Hle/GpuHle.cs
++++ b/RecompOne.Runtime/Gpu/Hle/GpuHle.cs
+@@ -8,6 +8,7 @@ public static class GpuHle
+     public static float WideAspect { get; set; }
+     public static float OutputAspect { get; set; } = 4f / 3f;
+     public static bool NativeResolution { get; set; }
++    public static bool SmoothScaling { get; set; } = true;
+     public static float TargetAspect { get; set; } = 4f / 3f;
+     public const float BaseAspect = 4f / 3f;
+ 
+diff --git a/RecompOne.Runtime/Hardware/Gte.cs b/RecompOne.Runtime/Hardware/Gte.cs
+index e13c28a..2aa9976 100644
+--- a/RecompOne.Runtime/Hardware/Gte.cs
++++ b/RecompOne.Runtime/Hardware/Gte.cs
+@@ -230,10 +230,15 @@ public static class Gte
+                 SetMac(3, (long)IR3 * IR3, sf, lm);
+                 break;
+             case 0x0C:
+-                SetMac(1, (long)RT[4] * IR3 - (long)RT[8] * IR2, sf, lm);
+-                SetMac(2, (long)RT[8] * IR1 - (long)RT[0] * IR3, sf, lm);
+-                SetMac(3, (long)RT[0] * IR2 - (long)RT[4] * IR1, sf, lm);
++            {
++                // All three products use the IR values from before the command; SetMac
++                // overwrites IR1/IR2 as it goes, so latch the operands first.
++                long ir1 = IR1, ir2 = IR2, ir3 = IR3;
++                SetMac(1, (long)RT[4] * ir3 - (long)RT[8] * ir2, sf, lm);
++                SetMac(2, (long)RT[8] * ir1 - (long)RT[0] * ir3, sf, lm);
++                SetMac(3, (long)RT[0] * ir2 - (long)RT[4] * ir1, sf, lm);
+                 break;
++            }
+             case 0x3D:
+                 SetMac(1, (long)IR0 * IR1, sf, lm);
+                 SetMac(2, (long)IR0 * IR2, sf, lm);
+diff --git a/RecompOne.Runtime/Hardware/Spu.cs b/RecompOne.Runtime/Hardware/Spu.cs
+index fff4026..9a0489a 100644
+--- a/RecompOne.Runtime/Hardware/Spu.cs
++++ b/RecompOne.Runtime/Hardware/Spu.cs
+@@ -146,6 +146,8 @@ public sealed class Spu
+     ushort _cdVolL, _cdVolR;
+     ushort _extVolL, _extVolR;
+     ushort _reverbStartAddr;
++    ushort _irqAddr;
++    int _irqPending;
+ 
+     int _noiseLevel = 1;
+     int _noiseTimer;
+@@ -200,6 +202,7 @@ public sealed class Spu
+             0x19C => (ushort)(_endx & 0xFFFF),
+             0x19E => (ushort)(_endx >> 16),
+             0x1A2 => _reverbStartAddr,
++            0x1A4 => _irqAddr,
+             0x1A6 => _transferAddr,
+             0x1AA => _spucnt,
+             0x1AC => _transferCtrl,
+@@ -257,6 +260,7 @@ public sealed class Spu
+             case 0x198: _eon = val; break;
+             case 0x19A: _eonHi = val; break;
+             case 0x1A2: _reverbStartAddr = val; break;
++            case 0x1A4: _irqAddr = val; break;
+             case 0x1A6: _transferAddr = val; break;
+             case 0x1AA: _spucnt = val; break;
+             case 0x1AC: _transferCtrl = val; break;
+@@ -301,6 +305,8 @@ public sealed class Spu
+ 
+     public uint TransferAddrBytes() => (uint)_transferAddr << 3;
+ 
++    public bool ConsumeIrq() => Interlocked.Exchange(ref _irqPending, 0) != 0;
++
+     public void CaptureDebug(VoiceDebug[] voices, out SpuDebug state)
+     {
+         lock (_sync)
+@@ -487,6 +493,8 @@ public sealed class Spu
+         v.Buf[2] = v.Buf[30];
+ 
+         uint addr = v.CurAddr & (uint)(RamSize - 1);
++        if ((_spucnt & 0x40) != 0 && (addr >> 3) == _irqAddr)
++            Interlocked.Exchange(ref _irqPending, 1);
+         byte hdr = Ram[addr];
+         byte flags = Ram[(addr + 1) & (RamSize - 1)];
+ 
+diff --git a/RecompOne.Runtime/Host/InputManager.cs b/RecompOne.Runtime/Host/InputManager.cs
+index 928d144..17b4a80 100644
+--- a/RecompOne.Runtime/Host/InputManager.cs
++++ b/RecompOne.Runtime/Host/InputManager.cs
+@@ -1,4 +1,5 @@
+ using System.Numerics;
++using System.Runtime.InteropServices;
+ using Silk.NET.Input;
+ using Silk.NET.SDL;
+ using RecompOne.Runtime.Config;
+@@ -72,6 +73,41 @@ internal static unsafe class InputManager
+ 
+     public static bool IsPadConnected(int pad) => pad == 0 ? _pad0 != null : _pad1 != null;
+ 
++    public static GamepadSnapshot GetGamepadSnapshot(int pad = 0)
++    {
++        var ctrl = pad == 0 ? _pad0 : _pad1;
++        if (_sdl == null || ctrl == null) return GamepadSnapshot.Disconnected;
++
++        var active = new List<int>();
++        for (int b = 0; b < (int)GameControllerButton.Max; b++)
++            if (_sdl.GameControllerGetButton(ctrl, (GameControllerButton)b) != 0)
++                active.Add(b);
++        if (Pressed(ctrl, LeftTrigger)) active.Add(LeftTrigger);
++        if (Pressed(ctrl, RightTrigger)) active.Add(RightTrigger);
++        for (int b = LeftStickLeft; b <= RightStickDown; b++)
++            if (Pressed(ctrl, b)) active.Add(b);
++
++        var namePtr = (nint)_sdl.GameControllerName(ctrl);
++        string name = namePtr == 0 ? "Gamepad" : Marshal.PtrToStringUTF8(namePtr) ?? "Gamepad";
++        return new GamepadSnapshot(
++            true, name, [.. active],
++            NormalizeAxis(_sdl.GameControllerGetAxis(ctrl, GameControllerAxis.Leftx)),
++            NormalizeAxis(_sdl.GameControllerGetAxis(ctrl, GameControllerAxis.Lefty)),
++            NormalizeAxis(_sdl.GameControllerGetAxis(ctrl, GameControllerAxis.Rightx)),
++            NormalizeAxis(_sdl.GameControllerGetAxis(ctrl, GameControllerAxis.Righty)),
++            NormalizeTrigger(_sdl.GameControllerGetAxis(ctrl, GameControllerAxis.Triggerleft)),
++            NormalizeTrigger(_sdl.GameControllerGetAxis(ctrl, GameControllerAxis.Triggerright)));
++    }
++
++    public static bool ApplyStandardGamepadMapping(int pad = 0)
++    {
++        if (!IsPadConnected(pad)) return false;
++        if (pad == 0) ConfigManager.Game.Pad = new GamepadBindings();
++        else ConfigManager.Game.Pad2 = new GamepadBindings();
++        ConfigManager.SaveGame();
++        return true;
++    }
++
+     public static bool IsKeyDown(Key k) => _keyboard?.IsKeyPressed(k) ?? false;
+ 
+     public static void Poll()
+@@ -294,6 +330,9 @@ internal static unsafe class InputManager
+         return (byte)Math.Clamp((int)MathF.Round((f + 1.0f) * 127.5f), 0, 255);
+     }
+ 
++    static float NormalizeAxis(short axis) => Math.Clamp(axis / 32768.0f, -1.0f, 1.0f);
++    static float NormalizeTrigger(short axis) => Math.Clamp(axis / 32767.0f, 0.0f, 1.0f);
++
+     public static void SetRumble(byte large, byte small)
+     {
+         if (_sdl == null || _pad0 == null) return;
+diff --git a/RecompOne.Runtime/Host/Window/HostWindow.cs b/RecompOne.Runtime/Host/Window/HostWindow.cs
+index 4a3da3d..825514f 100644
+--- a/RecompOne.Runtime/Host/Window/HostWindow.cs
++++ b/RecompOne.Runtime/Host/Window/HostWindow.cs
+@@ -42,15 +42,23 @@ internal static class HostWindow
+ 
+         try
+         {
++            var apiVersion = OperatingSystem.IsMacOS()
++                ? new APIVersion(4, 1)
++                : new APIVersion(4, 5);
+             var options = WindowOptions.Default with
+             {
+-                Size = new Vector2D<int>(1280, 720),
++                Size = new Vector2D<int>(Runtime.StartupWindowWidth ?? 1280, Runtime.StartupWindowHeight ?? 720),
+                 Title = title,
+                 VSync = false,
+                 UpdatesPerSecond = 0,
+                 FramesPerSecond = 0,
+-                WindowState = ConfigManager.View.Fullscreen ? WindowState.Fullscreen : WindowState.Normal,
+-                API = new GraphicsAPI(ContextAPI.OpenGL, ContextProfile.Core, ContextFlags.Default, new APIVersion(4, 5)),
++                WindowState = (Runtime.StartupFullscreen ?? ConfigManager.View.Fullscreen)
++                    ? WindowState.Fullscreen : WindowState.Normal,
++                API = new GraphicsAPI(
++                    ContextAPI.OpenGL,
++                    ContextProfile.Core,
++                    ContextFlags.Default,
++                    apiVersion),
+             };
+             _window = Silk.NET.Windowing.Window.Create(options);
+             _window.Load += OnLoad;
+@@ -89,6 +97,34 @@ internal static class HostWindow
+         _window.DoRender();
+     }
+ 
++    internal static void PumpUi()
++    {
++        if (_headless || _window == null) return;
++        try { _window.DoEvents(); } catch { }
++        if (_window.IsClosing) { Runtime.Shutdown(); Environment.Exit(0); }
++        InputManager.Poll();
++        _window.DoRender();
++    }
++
++    internal static (int Width, int Height) FramebufferSize =>
++        _window == null ? (0, 0) : (_window.FramebufferSize.X, _window.FramebufferSize.Y);
++
++    internal static GamepadSnapshot GetGamepadSnapshot(int pad) => InputManager.GetGamepadSnapshot(pad);
++
++    internal static bool ApplyStandardGamepadMapping(int pad) => InputManager.ApplyStandardGamepadMapping(pad);
++
++    internal static nint CreateRgbaTexture(byte[] rgba, int width, int height)
++    {
++        if (_gl == null) return 0;
++        uint tex = CreateTexture(_gl);
++        _gl.BindTexture(TextureTarget.Texture2D, tex);
++        _gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMinFilter, (int)GLEnum.Linear);
++        _gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMagFilter, (int)GLEnum.Linear);
++        _gl.TexImage2D<byte>(TextureTarget.Texture2D, 0, InternalFormat.Rgba, (uint)width, (uint)height, 0,
++            PixelFormat.Rgba, PixelType.UnsignedByte, rgba);
++        return (nint)tex;
++    }
++
+     internal static void Pump()
+     {
+         if (_headless || _window == null) return;
+@@ -110,10 +146,51 @@ internal static class HostWindow
+         _window.WindowState = on ? WindowState.Fullscreen : WindowState.Normal;
+     }
+ 
++    internal static void ApplyDisplaySettings(int width, int height, bool fullscreen, int renderScale, bool smoothScaling)
++    {
++        width = Math.Clamp(width, 640, 7680);
++        height = Math.Clamp(height, 480, 4320);
++        renderScale = renderScale is 1 or 2 or 4 ? renderScale : 4;
++
++        ConfigManager.View.Fullscreen = fullscreen;
++        if (_window != null)
++        {
++            // Set the requested windowed size before entering fullscreen so leaving fullscreen
++            // returns to the launcher's selected dimensions.
++            _window.Size = new Vector2D<int>(width, height);
++            SetFullscreen(fullscreen);
++        }
++
++        Hle.GpuHle.SmoothScaling = smoothScaling;
++        Hle.GpuHle.NativeResolution = renderScale == 1;
++
++        if (_gl == null || renderScale == Hle.GlVram.Scale) return;
++        if (_gpu != null)
++        {
++            Console.Error.WriteLine("[Host] render scale can only change before the game starts");
++            return;
++        }
++
++        _glBackend?.Dispose();
++        Hle.GlVram.Scale = renderScale;
++        _glBackend = new Hle.GlBackend(_gl);
++        _glBackend.InitGl();
++        Hle.GpuHle.Active = _glBackend.Ready;
++        Hle.GpuHle.Backend = _glBackend;
++    }
++
+     public static bool IsKeyDown(Key k) => InputManager.IsKeyDown(k);
+ 
+     public static void RequestDiscPath() => _discPicker?.Show();
+ 
++    public static void UseDiscPath(string path)
++    {
++        ConfigManager.Game.CdPath = path;
++        ConfigManager.SaveGame();
++        _discPicker?.Hide();
++        _layoutPending = true;
++    }
++
+     public static void WaitForValidDisc() // wait for disc path to be valid before running it!!
+     {
+         if (_headless || _window == null) return;
+@@ -153,12 +230,15 @@ internal static class HostWindow
+         _vramTex= CreateTexture(_gl);
+         _ramTex = CreateTexture(_gl);
+ 
+-        Hle.GlVram.Scale = ConfigManager.View.NativeResolution ? 1 : 4;
++        Hle.GlVram.Scale = Runtime.StartupRenderScale
++            ?? (ConfigManager.View.NativeResolution ? 1 : 4);
+         _glBackend = new Hle.GlBackend(_gl);
+         _glBackend.InitGl();
+         Hle.GpuHle.Active = _glBackend.Ready;
+         Hle.GpuHle.Backend = _glBackend;
+-        Hle.GpuHle.NativeResolution = ConfigManager.View.NativeResolution;
++        Hle.GpuHle.NativeResolution = Hle.GlVram.Scale == 1;
++        Hle.GpuHle.SmoothScaling = Runtime.StartupSmoothScaling
++            ?? !Hle.GpuHle.NativeResolution;
+ 
+         _imgui = new ImGuiController(_gl, _window, input, null, ConfigureImGui);
+ 
+@@ -198,6 +278,13 @@ internal static class HostWindow
+ 
+         if (Config.ConfigManager.ApplyImGuiLayout())
+             _layoutPending = false;
++
++        if (Runtime.UiFontRequests.Count > 0)
++        {
++            io.Fonts.AddFontDefault();
++            foreach (var (path, size) in Runtime.UiFontRequests)
++                Runtime.UiFonts.Add(File.Exists(path) ? io.Fonts.AddFontFromFileTTF(path, size) : null);
++        }
+     }
+ 
+     static void OnRender(double dt)
+@@ -247,7 +334,7 @@ internal static class HostWindow
+             if (_ramReady) FlushRamTexture(gl);
+         }
+ 
+-        if (!ConfigManager.View.HideTopBar)
++        if (Runtime.TopBarOverride ?? !ConfigManager.View.HideTopBar)
+             MainMenuBar.Draw();
+ 
+         DrawDockspace();
+@@ -256,6 +343,7 @@ internal static class HostWindow
+         Modding.ModLoadingPopup.Draw();
+         NoticePopup.Draw();
+         if (StartupNotice.NeedsAck) StartupNotice.Draw();
++        Runtime.UiOverlay?.Invoke();
+         gl.BindFramebuffer(FramebufferTarget.Framebuffer, 0);
+         gl.Viewport(0, 0, (uint)fbDef.X, (uint)fbDef.Y);
+         _imgui.Render();
+diff --git a/RecompOne.Runtime/Host/Window/Panels/Configuration/DiscPickerPopup.cs b/RecompOne.Runtime/Host/Window/Panels/Configuration/DiscPickerPopup.cs
+index 4223d9c..914b819 100644
+--- a/RecompOne.Runtime/Host/Window/Panels/Configuration/DiscPickerPopup.cs
++++ b/RecompOne.Runtime/Host/Window/Panels/Configuration/DiscPickerPopup.cs
+@@ -29,6 +29,12 @@ internal sealed class DiscPickerPopup : IPanel
+         IsOpen = true;
+     }
+ 
++    public void Hide()
++    {
++        _pendingOpen = false;
++        IsOpen = false;
++    }
++
+     public void Draw()
+     {
+         if (!IsOpen) return;
+diff --git a/RecompOne.Runtime/Memory/Dma.cs b/RecompOne.Runtime/Memory/Dma.cs
+index c376f15..0ae08eb 100644
+--- a/RecompOne.Runtime/Memory/Dma.cs
++++ b/RecompOne.Runtime/Memory/Dma.cs
+@@ -14,6 +14,8 @@ public sealed class Dma
+     CdController? _cd;
+ 
+     uint _dicr;
++    bool _raisingIrq;
++    bool _deferredIrq;
+ 
+     public Dma(IMemory mem, Gpu gpu, Spu spu, Mdec mdec, Action raiseIrq)
+     {
+@@ -26,6 +28,13 @@ public sealed class Dma
+ 
+     public void SetCd(CdController cd) => _cd = cd;
+ 
++    public void Tick()
++    {
++        if (!_deferredIrq || _raisingIrq) return;
++        _deferredIrq = false;
++        RaiseIrq();
++    }
++
+     public uint ReadDicr() => _dicr;
+ 
+     public void WriteDicr(uint val)
+@@ -112,6 +121,7 @@ public sealed class Dma
+     {
+         if (_cd == null) return;
+         _cd.DmaReadData(_mem, madr, WordCount(bcr) * 4u);
++        Sdk.LibCd.NotifySectorConsumed();
+     }
+ 
+     void ClearOrderingTable(uint madr, uint bcr)
+@@ -133,7 +143,27 @@ public sealed class Dma
+         bool enabled = (_dicr & (1u << (16 + channel))) != 0;
+         if (!master || !enabled) return;
+         _dicr |= 1u << (24 + channel);
+-        _raiseIrq();
++        // GPU linked-list DMA completes asynchronously on the console. Dispatching its IRQ
++        // from inside the CHCR write runs the callback before the game raises its frame fence.
++        if (channel == 2 || _raisingIrq)
++        {
++            _deferredIrq = true;
++            return;
++        }
++        RaiseIrq();
++    }
++
++    void RaiseIrq()
++    {
++        _raisingIrq = true;
++        try
++        {
++            _raiseIrq();
++        }
++        finally
++        {
++            _raisingIrq = false;
++        }
+     }
+ 
+     static uint WordCount(uint bcr)
+diff --git a/RecompOne.Runtime/Memory/PSMemory.cs b/RecompOne.Runtime/Memory/PSMemory.cs
+index c1476f7..a023923 100644
+--- a/RecompOne.Runtime/Memory/PSMemory.cs
++++ b/RecompOne.Runtime/Memory/PSMemory.cs
+@@ -31,6 +31,13 @@ public sealed class PSMemory : IMemory
+ 
+     public void SetCd(CdController cd) { _cd = cd; _dma.SetCd(cd); }
+ 
++    public void TickDma() => _dma.Tick();
++
++    public void TickSpuIrq()
++    {
++        if (_spu.ConsumeIrq()) Runtime.DispatchIrq(9);
++    }
++
+     private static bool IsDmaChcr(uint phys) => phys >= 0x1F801080u && phys < 0x1F8010F0u && (phys & 0xFu) == 8u;
+ 
+     private uint Hw32(uint phys)
+diff --git a/RecompOne.Runtime/Runtime.cs b/RecompOne.Runtime/Runtime.cs
+index bcefd60..e811845 100644
+--- a/RecompOne.Runtime/Runtime.cs
++++ b/RecompOne.Runtime/Runtime.cs
+@@ -7,6 +7,20 @@ namespace RecompOne.Runtime;
+ 
+ public enum RunMode { Retail, Devkit }
+ 
++public readonly record struct GamepadSnapshot(
++    bool Connected,
++    string Name,
++    int[] ActiveInputs,
++    float LeftX,
++    float LeftY,
++    float RightX,
++    float RightY,
++    float LeftTrigger,
++    float RightTrigger)
++{
++    public static GamepadSnapshot Disconnected => new(false, "", [], 0f, 0f, 0f, 0f, 0f, 0f);
++}
++
+ public static class Runtime
+ {
+     public static CpuContext? Cpu { get; private set; }
+@@ -18,6 +32,23 @@ public static class Runtime
+     public static RunMode Mode { get; private set; } = RunMode.Retail;
+     public static void SetMode(RunMode mode) => Mode = mode; //devkit vs retail, devkits reads from sim and has more ram
+     public static string CdPath => Config.ConfigManager.Game.CdPath;
++
++    // Optional host-display overrides supplied before Initialize. Keeping these nullable preserves
++    // RecompOne's existing interface.ini behaviour for hosts that do not provide a launcher.
++    public static int? StartupWindowWidth { get; private set; }
++    public static int? StartupWindowHeight { get; private set; }
++    public static bool? StartupFullscreen { get; private set; }
++    public static int? StartupRenderScale { get; private set; }
++    public static bool? StartupSmoothScaling { get; private set; }
++
++    public static void ConfigureStartupDisplay(int width, int height, bool fullscreen, int renderScale, bool smoothScaling)
++    {
++        StartupWindowWidth = Math.Clamp(width, 640, 7680);
++        StartupWindowHeight = Math.Clamp(height, 480, 4320);
++        StartupFullscreen = fullscreen;
++        StartupRenderScale = renderScale is 1 or 2 or 4 ? renderScale : 4;
++        StartupSmoothScaling = smoothScaling;
++    }
+     
+     public static Config.ViewConfig View => Config.ConfigManager.View;
+     public static void SaveView() => Config.ConfigManager.SaveView(Host.Window.PanelManager.Panels);
+@@ -39,7 +70,55 @@ public static class Runtime
+         }
+     }
+ 
+-    public static void WaitForValidDisc() => HostWindow.WaitForValidDisc();
++    public static void WaitForValidDisc(string? cuePath = null)
++    {
++        if (!string.IsNullOrWhiteSpace(cuePath) && File.Exists(cuePath))
++            HostWindow.UseDiscPath(cuePath);
++        else
++            HostWindow.WaitForValidDisc();
++        PreBoot?.Invoke();
++    }
++
++    /// <summary>Runs once the disc is valid and before the game boots (e.g. a launcher screen).</summary>
++    public static Action? PreBoot { get; set; }
++
++    /// <summary>Drawn with ImGui on top of everything every frame, before and during the game.</summary>
++    public static Action? UiOverlay { get; set; }
++
++    /// <summary>Extra fonts (path, pixel size) loaded when ImGui starts; see <see cref="UiFonts"/>.</summary>
++    public static List<(string Path, float Size)> UiFontRequests { get; } = new();
++
++    /// <summary>Fonts loaded from <see cref="UiFontRequests"/>, in the same order (null if missing).</summary>
++    public static List<ImGuiNET.ImFontPtr?> UiFonts { get; } = new();
++
++    /// <summary>Processes window events, input and one UI frame without advancing the game.</summary>
++    public static void PumpUi() => HostWindow.PumpUi();
++
++    /// <summary>Uploads an RGBA image and returns a texture id usable with ImGui draw lists.</summary>
++    public static nint CreateUiTexture(byte[] rgba, int width, int height) =>
++        HostWindow.CreateRgbaTexture(rgba, width, height);
++
++    /// <summary>Shows or hides the top menu bar for this session without changing the saved setting.</summary>
++    public static bool? TopBarOverride { get; set; }
++
++    /// <summary>Framebuffer size of the main window, in pixels.</summary>
++    public static (int Width, int Height) WindowPixelSize => HostWindow.FramebufferSize;
++
++    /// <summary>Returns the current physical state of a host keyboard key.</summary>
++    public static bool IsKeyDown(Silk.NET.Input.Key key) => HostWindow.IsKeyDown(key);
++
++    /// <summary>Raw standardized SDL state for launcher diagnostics and remapping.</summary>
++    public static GamepadSnapshot GetGamepadSnapshot(int pad = 0) => HostWindow.GetGamepadSnapshot(pad);
++
++    /// <summary>Maps a connected controller's standardized SDL inputs to every PlayStation button.</summary>
++    public static bool ApplyStandardGamepadMapping(int pad = 0) => HostWindow.ApplyStandardGamepadMapping(pad);
++
++    /// <summary>
++    /// Applies launcher display choices. Render scale can only be rebuilt before the first game
++    /// frame; window size, fullscreen and presentation filtering remain safe at any time.
++    /// </summary>
++    public static void ApplyDisplaySettings(int width, int height, bool fullscreen, int renderScale, bool smoothScaling) =>
++        HostWindow.ApplyDisplaySettings(width, height, fullscreen, renderScale, smoothScaling);
+     
+     public static void ShowNotice(string message) => Host.Window.NoticePopup.Show(message);
+     public static void SetStartupNotice(string message, string title = "Notice", string ackKey = "StartupNoticeAck") => Host.Window.StartupNotice.Set(message, title, ackKey);
+@@ -56,10 +135,22 @@ public static class Runtime
+         Audio.Attach(Spu);
+         FrameClock.Throttle();
+         Sdk.LibCd.Tick();
++        if (Mem != null) Bios.BiosB.TickCard(Mem);
++        if (Mem is PSMemory spuMemory) spuMemory.TickSpuIrq();
++        if (Mem is PSMemory psMemory) psMemory.TickDma();
+         if (Mem != null) { Bios.BiosB.RefreshPad(Mem); Sdk.LibPad.Refresh(Mem); } //is this correct?
+         DispatchIrq(0); //using this to dispatch irqs too if necessary, probably not needed after the rest of stuff is reimplemented
+     }
+ 
++    public static void PumpCd() => Sdk.LibCd.Tick();
++
++    public static void PumpSpu()
++    {
++        if (Mem is not PSMemory psMemory) return;
++        psMemory.TickSpuIrq();
++        psMemory.TickDma();
++    }
++
+     public static void DispatchIrq(int irq)
+     {
+         if (Cpu != null && Mem != null)
+diff --git a/RecompOne.Runtime/sdk/LibCd.cs b/RecompOne.Runtime/sdk/LibCd.cs
+index 99cbcd6..1a862f8 100644
+--- a/RecompOne.Runtime/sdk/LibCd.cs
++++ b/RecompOne.Runtime/sdk/LibCd.cs
+@@ -40,6 +40,9 @@ public static class LibCd
+     static uint _cbData;
+ 
+     static bool _readActive;
++    static bool _sectorConsumed;
++    static bool _pumpingRead;
++    static int _readGeneration;
+     static bool _xaActive;
+     static byte _filterFile;
+     static byte _filterChannel;
+@@ -120,21 +123,11 @@ public static class LibCd
+ 
+         if (_readActive && xaMode) return;
+ 
+-        if (!_readActive || _cbData == 0) return;
++        if (!_readActive || (_cbReady == 0 && _cbData == 0)) return;
+         var c = Runtime.Cpu;
+         var m = Runtime.Mem;
+         if (c == null || m == null) return;
+-
+-        var snap = c.Snapshot();
+-        while (_cbData != 0)
+-        {
+-            _lastIntr = DataReady;
+-            if (_cbReady != 0) { c.A0 = DataReady; c.A1 = 0; Dispatcher.Call(c, m, _cbReady); }
+-            AdvancePos(1);
+-            Dispatcher.LoadByLba(CurrentLba);
+-            if (_cbData != 0) { c.A0 = DataReady; c.A1 = 0; Dispatcher.Call(c, m, _cbData); }
+-        }
+-        c.Restore(snap);
++        PumpReadCallbacks(m, 1);
+     }
+ 
+     static void EnsureXaThread()
+@@ -199,9 +192,12 @@ public static class LibCd
+         int bytes = Math.Min(data.Length, words * 4);
+         for (int j = 0; j < bytes; j++)
+             m.WriteU8(madr + (uint)j, data[j]);
++        _sectorConsumed = true;
+         c.V0 = 1;
+     }
+ 
++    internal static void NotifySectorConsumed() => _sectorConsumed = true;
++
+     public static void CdDataSync(CpuContext c, IMemory m) => c.V0 = 0;
+ 
+     public static void CdSearchFile(CpuContext c, IMemory m)
+@@ -240,6 +236,18 @@ public static class LibCd
+     public static void CdReadCallback(CpuContext c, IMemory m) { c.V0 = _cbData; _cbData = c.A0; }
+     public static void CdDataCallback(CpuContext c, IMemory m) { c.V0 = _cbData; _cbData = c.A0; }
+ 
++    static void DispatchCallback(uint callback, int interrupt, IMemory m)
++    {
++        var c = Runtime.Cpu;
++        if (callback == 0 || c == null) return;
++        var snap = c.Snapshot();
++        Log.Sdk($"Cd callback 0x{callback:X8} intr={interrupt}");
++        c.A0 = (uint)interrupt;
++        c.A1 = 0;
++        Dispatcher.Call(c, m, callback);
++        c.Restore(snap);
++    }
++
+     public static void CdStatus(CpuContext c, IMemory m) => c.V0 = _status;
+     public static void CdMode(CpuContext c, IMemory m) => c.V0 = _mode;
+     public static void CdLastCom(CpuContext c, IMemory m) => c.V0 = _com;
+@@ -254,6 +262,8 @@ public static class LibCd
+         _lastIntr = Complete;
+         _cbSync = _cbReady = _cbData = 0;
+         _readActive = false;
++        _pumpingRead = false;
++        _readGeneration = 0;
+         _xaActive = false;
+         _filterFile = _filterChannel = 0;
+         Array.Clear(_pos);
+@@ -271,11 +281,11 @@ public static class LibCd
+     static int CommandWait(IMemory m, byte com, uint param, uint result, uint arg)
+     {
+         if (param != 0 && com < NeedsLoc.Length && NeedsLoc[com])
+-            ExecCommand(m, Setloc, param, 0);
++            ExecCommand(m, Setloc, param, 0, false);
+         return ExecCommand(m, com, param, result);
+     }
+ 
+-    static int ExecCommand(IMemory m, byte com, uint param, uint result)
++    static int ExecCommand(IMemory m, byte com, uint param, uint result, bool notifySync = true)
+     {
+         _com = com;
+         _lastIntr = Complete;
+@@ -296,6 +306,7 @@ public static class LibCd
+                 break;
+             case ReadN:
+                 _readActive = true;
++                _readGeneration++;
+                 Dispatcher.LoadByLba(CurrentLba);
+                 EnsureXaThread();
+                 break;
+@@ -318,6 +329,7 @@ public static class LibCd
+                 _lastResult[6] = 0;
+                 _lastResult[7] = 0;
+                 if (result != 0) WriteResult(m, result);
++                if (notifySync) DispatchCallback(_cbSync, Complete, m);
+                 return 0;
+             case Pause: case Stop: case Init:
+                 LibCdStream.OnStopStream();
+@@ -335,9 +347,45 @@ public static class LibCd
+         _lastResult[0] = _status;
+         for (int i = 1; i < _lastResult.Length; i++) _lastResult[i] = 0;
+         if (result != 0) WriteResult(m, result);
++        if (notifySync) DispatchCallback(_cbSync, Complete, m);
++        if (com == ReadN && (_mode & 0x40) == 0) PumpReadCallbacks(m, 4096);
+         return 0;
+     }
+ 
++    static void PumpReadCallbacks(IMemory m, int limit)
++    {
++        if (_pumpingRead) return;
++        _pumpingRead = true;
++        try
++        {
++            for (int i = 0; i < limit && _readActive; i++)
++            {
++                uint ready = _cbReady;
++                uint data = _cbData;
++                if (ready == 0 && data == 0) return;
++
++                int generation = _readGeneration;
++                int lba = CurrentLba;
++                lock (DiscLock)
++                    Runtime.Cd!.LoadSectorToFifo(Runtime.Cd.ReadSectorData(lba, 2340));
++                Dispatcher.LoadByLba(lba);
++
++                _lastIntr = DataReady;
++                _sectorConsumed = false;
++                DispatchCallback(ready, DataReady, m);
++                DispatchCallback(data, DataReady, m);
++                if (_readGeneration != generation) continue;
++                if (!_sectorConsumed) return;
++
++                AdvancePos(1);
++            }
++        }
++        finally
++        {
++            _pumpingRead = false;
++        }
++    }
++
+     static int SyncResult(IMemory m, uint result)
+     {
+         if (result != 0) WriteResult(m, result);

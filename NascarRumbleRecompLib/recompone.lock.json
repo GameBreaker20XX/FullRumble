@@ -1,0 +1,7 @@
+{
+  "schema_version": 1,
+  "repository": "https://github.com/BlackLabelHQ/RecompOne.git",
+  "commit": "4edc6899a4516f292facfd35b77a2fd2d79e03c1",
+  "dotnet_sdk": "10.0.302",
+  "local_patch": "recompone/patches/recompone-macos.patch"
+}

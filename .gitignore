@@ -26,3 +26,5 @@ publish/
 .vs/
 .idea/
 *.log
+__pycache__/
+*.pyc
