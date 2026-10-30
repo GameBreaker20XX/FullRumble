@@ -1,4 +1,5 @@
 using System.Reflection;
+using FullRumble;
 using FullRumble.Config;
 using FullRumble.Disc;
 
@@ -64,9 +65,28 @@ Console.WriteLine($"FullRumble {version} — static recompilation of NASCAR Rumb
 Console.WriteLine("This project does not include any game assets.");
 
 var loaded = UserConfig.Load();
-if (loaded.DiscPath is { } discPath)
-    Console.WriteLine($"Disc configured: {discPath}");
-else
+if (loaded.DiscPath is not { } configured)
+{
     Console.WriteLine("Disc: not configured. See docs/DUMPING.md to prepare a dump from a disc you own.");
+    Console.WriteLine("Then point FullRumble at it:  FullRumble --set-disc \"path\\to\\game.cue\"");
+    return 0;
+}
 
-return 0;
+string boot = configured;
+if (Directory.Exists(configured))
+{
+    var found = DiscFinder.Scan(configured);
+    if (found.Count == 1)
+        boot = found[0];
+}
+
+var validation = DiscValidator.Validate(boot);
+if (validation.Status != DiscStatus.Valid)
+{
+    Console.Error.WriteLine($"Disc not valid: {validation.Message}");
+    Console.Error.WriteLine("Fix the dump, or choose another with:  FullRumble --set-disc PATH");
+    return 1;
+}
+Console.WriteLine($"Disc configured: {boot}");
+
+return GameBoot.Run(boot);

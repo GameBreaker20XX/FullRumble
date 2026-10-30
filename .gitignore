@@ -28,3 +28,8 @@ publish/
 *.log
 __pycache__/
 *.pyc
+
+# Player-local runtime configuration written next to the working directory
+/settings.json
+/interface.ini
+/launcher.json

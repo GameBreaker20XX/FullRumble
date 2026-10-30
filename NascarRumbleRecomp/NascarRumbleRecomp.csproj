@@ -10,4 +10,8 @@
     <ApplicationIcon>..\NascarRumbleRecompResources\icon\FullRumble.ico</ApplicationIcon>
   </PropertyGroup>
 
+  <ItemGroup>
+    <ProjectReference Include="../thirdparty/RecompOne/RecompOne.Runtime/RecompOne.Runtime.csproj" />
+  </ItemGroup>
+
 </Project>

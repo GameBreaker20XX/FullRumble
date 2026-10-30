@@ -113,6 +113,15 @@ def main() -> int:
         raise SystemExit("funcMap did not converge after six recompiler passes.")
 
     run([dotnet, "build", str(LIB), "-c", "Release"])
+
+    # Install the library next to the host so it resolves RecompOne.Runtime against the copy the
+    # host already loaded (the host loads this dll by reflection at startup).
+    built = LIB / "bin" / "Release" / "net10.0" / "NascarRumbleRecompLib.dll"
+    host_dir = HOST.parent
+    if built.is_file() and host_dir.is_dir():
+        shutil.copyfile(built, host_dir / built.name)
+        print("+ installed", built.name, "->", host_dir)
+
     print("PASS — NascarRumbleRecompLib.dll built from", disc)
     return 0
 

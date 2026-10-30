@@ -549,7 +549,72 @@ index 928d144..17b4a80 100644
      public static bool IsKeyDown(Key k) => _keyboard?.IsKeyPressed(k) ?? false;
  
      public static void Poll()
-@@ -294,6 +330,9 @@ internal static unsafe class InputManager
+@@ -78,7 +114,17 @@ internal static unsafe class InputManager
+     {
+         PollGamepadEvents();
+         PollKeyboard();
+         PollGamepads();
+         Controller.Connected2 = _pad1 != null || HasAnyKey(ConfigManager.Game.Keys2);
++        if (_pad0 == null) ApplyKeyboardAnalog();
+     }
+ 
++    // Menus and steering read the analog stick; mirror the digital pad onto it for keyboard-only players.
++    static void ApplyKeyboardAnalog()
++    {
++        Controller.LeftX = KeyAxis(Controller.State, Controller.Left, Controller.Right);
++        Controller.LeftY = KeyAxis(Controller.State, Controller.Up, Controller.Down);
++    }
++
++    static byte KeyAxis(ushort state, ushort negative, ushort positive) =>
++        (state & positive) == 0 ? (byte)0xFF : (state & negative) == 0 ? (byte)0x00 : (byte)0x80;
+@@ -186,28 +232,45 @@ internal static unsafe class InputManager
+         ushort s = 0xFFFF;
+         void B(string keyName, ushort bit)
+         {
+-            if (Enum.TryParse<Key>(keyName, out var k) && kb.IsKeyPressed(k))
++            if (Enum.TryParse<Key>(keyName, out var k) && (kb.IsKeyPressed(k) || OsKeyDown(keyName)))
+                 s &= (ushort)~bit;
+         }
+ 
+         B(cfg.Cross,    Controller.Cross);
+         B(cfg.Circle,   Controller.Circle);
+         B(cfg.Square,   Controller.Square);
+         B(cfg.Triangle, Controller.Triangle);
+         B(cfg.L1,       Controller.L1);
+         B(cfg.R1,       Controller.R1);
+         B(cfg.L2,       Controller.L2);
+         B(cfg.R2,       Controller.R2);
+         B(cfg.L3,       Controller.L3);
+         B(cfg.R3,       Controller.R3);
+         B(cfg.Start,    Controller.Start);
+         B(cfg.Select,   Controller.Select);
+         B(cfg.Up,       Controller.Up);
+         B(cfg.Down,     Controller.Down);
+         B(cfg.Left,     Controller.Left);
+         B(cfg.Right,    Controller.Right);
+ 
+         return s;
+     }
+ 
++    // Some Windows input paths never surface arrow keys through the windowing backend; the OS key state never misses them.
++    [DllImport("user32.dll")]
++    static extern short GetAsyncKeyState(int vk);
++
++    static bool OsKeyDown(string keyName)
++    {
++        if (!OperatingSystem.IsWindows()) return false;
++        int vk = keyName switch
++        {
++            "Up" => 0x26, "Down" => 0x28, "Left" => 0x25, "Right" => 0x27,
++            "Enter" => 0x0D, "Escape" => 0x1B, "Space" => 0x20, "Tab" => 0x09,
++            "Backspace" => 0x08, "ShiftLeft" => 0xA0, "ShiftRight" => 0xA1,
++            _ => keyName.Length == 1 && char.IsLetterOrDigit(keyName[0]) ? char.ToUpperInvariant(keyName[0]) : 0
++        };
++        return vk != 0 && (GetAsyncKeyState(vk) & 0x8000) != 0;
++    }
++
+     static bool HasAnyKey(KeyBindings cfg) =>
+@@ -294,6 +357,9 @@ internal static unsafe class InputManager
          return (byte)Math.Clamp((int)MathF.Round((f + 1.0f) * 127.5f), 0, 255);
      }
  
