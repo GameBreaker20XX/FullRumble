@@ -196,12 +196,13 @@ internal static class SetupUi
         int screenW = GetSystemMetrics(0);
         int screenH = GetSystemMetrics(1);
         int width = S(760);
-        int height = S(620);
+        int height = S(638);
         SetWindowPos(hwnd, 0, (screenW - width) / 2, (screenH - height) / 2, width, height, 0x0040);
 
         Static(IdTitle, "Add your disc to play", SS_CENTER, _fontBig);
         Static(IdLegal, "FullRumble plays NASCAR Rumble (USA, Canada, SLUS-01068) from a dump you make from a disc you own. " +
-            "This project does not include any game assets. See docs/DUMPING.md for how to make one.", 0, _font);
+            "This project does not include any game assets. See docs/DUMPING.md for how to make one. " +
+            "An accepted disc is copied into the game's own disc folder, so this is a one-time step and your dump stays where it is.", 0, _font);
         Static(IdStatus, StatusText(), 0, _font);
         Static(IdMessage, _message, 0, _font);
         Button(IdAddFile, "Add disc file...", BS_OWNERDRAW | WS_TABSTOP);
@@ -256,7 +257,7 @@ internal static class SetupUi
         int y = pad;
 
         Place(IdTitle, pad, y, w, S(30)); y += S(34);
-        Place(IdLegal, pad, y, w, S(46)); y += S(52);
+        Place(IdLegal, pad, y, w, S(64)); y += S(70);
         Place(IdStatus, pad, y, w, S(20)); y += S(24);
         Place(IdMessage, pad, y, w, S(40)); y += S(46);
         Place(IdAddFile, pad, y, S(200), S(38));
@@ -372,11 +373,16 @@ internal static class SetupUi
 
         if (result.Status == DiscStatus.Valid)
         {
+            _message = "Copying the disc into the game folder...";
+            SetWindowTextW(GetDlgItem(_hwnd, IdMessage), _message);
+            UpdateWindow(_hwnd);
+
+            string staged = DiscLibrary.EnsureStaged(path, log: Log.Add);
             var config = UserConfig.Load();
-            config.DiscPath = path;
+            config.DiscPath = staged;
             config.Save();
             Log.Add($"saved to {UserConfig.FilePath}");
-            _result = path;
+            _result = staged;
             DestroyWindow(_hwnd);
             return;
         }

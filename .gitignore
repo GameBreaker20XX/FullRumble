@@ -15,6 +15,10 @@ private/
 recompiled/
 ppc/
 
+# The copy of the player's own disc that setup makes at first run
+/disc/
+*.part
+
 # Build output
 bin/
 obj/

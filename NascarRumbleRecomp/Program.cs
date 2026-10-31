@@ -79,7 +79,18 @@ if (configured is not null)
 
     previous = DiscValidator.Validate(boot);
     if (previous.Status == DiscStatus.Valid)
-        return GameBoot.Run(boot);
+    {
+        // Boot from the copy the game keeps for itself, so a lone .bin or .iso becomes the .cue
+        // the runtime reads and the player is never asked for the disc again.
+        string staged = DiscLibrary.EnsureStaged(boot);
+        if (!string.Equals(staged, boot, StringComparison.OrdinalIgnoreCase))
+        {
+            loaded.DiscPath = staged;
+            loaded.Save();
+        }
+
+        return GameBoot.Run(staged);
+    }
 }
 
 GameBoot.HideConsole();

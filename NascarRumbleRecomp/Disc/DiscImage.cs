@@ -23,6 +23,9 @@ public sealed class DiscImage : IDisposable
     public string? VolumeLabelHint { get; init; }
     public long SectorCount { get; private set; }
 
+    /// <summary>Frames of pregap the file carries before the data track.</summary>
+    public long DataTrackStartFrame => _firstSectorOffset;
+
     private DiscImage(FileStream stream, DiscFormat format, int sectorSize, int dataOffset, string sourcePath)
     {
         _stream = stream;
@@ -104,7 +107,12 @@ public sealed class DiscImage : IDisposable
                         $"Unrecognised sector mode {mode} in '{Path.GetFileName(path)}'."),
                 };
                 var format = mode == 1 ? DiscFormat.RawMode1 : DiscFormat.RawMode2;
-                return new DiscImage(stream, format, 2352, dataOffset, path);
+                var raw = new DiscImage(stream, format, 2352, dataOffset, path);
+                // Without a cue sheet nothing states where the data track begins, so find the
+                // volume descriptor and work backwards; dumps that carry a pregap need this.
+                return cuePath is null
+                    ? raw.WithTrackOffset(FindDataTrackStart(stream, 2352, dataOffset))
+                    : raw;
             }
 
             if (length % 2048 == 0 && LooksCooked(stream))
@@ -125,6 +133,23 @@ public sealed class DiscImage : IDisposable
         var buffer = new byte[5];
         stream.Seek(16 * 2048 + 1, SeekOrigin.Begin);
         return stream.Read(buffer, 0, 5) == 5 && System.Text.Encoding.ASCII.GetString(buffer) == "CD001";
+    }
+
+    /// <summary>Locates the primary volume descriptor and returns the frame the data track starts on.</summary>
+    private static long FindDataTrackStart(FileStream stream, int sectorSize, int dataOffset)
+    {
+        const int descriptorLba = 16;
+        long sectors = stream.Length / sectorSize;
+        var buffer = new byte[5];
+        for (long lba = descriptorLba; lba < Math.Min(sectors, 1200); lba++)
+        {
+            stream.Seek(lba * sectorSize + dataOffset + 1, SeekOrigin.Begin);
+            if (stream.Read(buffer, 0, 5) < 5) break;
+            if (System.Text.Encoding.ASCII.GetString(buffer) == "CD001")
+                return lba - descriptorLba;
+        }
+
+        return 0;
     }
 
     public byte[] ReadSectors(long lba, int count)

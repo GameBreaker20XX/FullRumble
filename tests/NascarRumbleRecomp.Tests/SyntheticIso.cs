@@ -63,6 +63,24 @@ public static class SyntheticIso
         return raw;
     }
 
+    /// <summary>Two seconds of lead-in style sectors, as a dump that carries a pregap would have.</summary>
+    public static byte[] Pregap(int frames)
+    {
+        var raw = new byte[frames * RawSector];
+        for (int i = 0; i < frames; i++)
+        {
+            int destination = i * RawSector;
+            raw[destination] = 0x00;
+            for (int b = 1; b <= 10; b++)
+                raw[destination + b] = 0xFF;
+            raw[destination + 11] = 0x00;
+            raw[destination + 15] = 2;
+            raw[destination + 18] = 0x18;
+        }
+
+        return raw;
+    }
+
     public static string CueFor(string binName) =>
         $"FILE \"{binName}\" BINARY\r\n  TRACK 01 MODE2/2352\r\n    INDEX 01 00:00:00\r\n";
 
