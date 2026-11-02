@@ -60,6 +60,31 @@ remain usable through manual button, axis, and hat binding. The Gamepad tab show
 you choose how button labels are displayed. The Mouse tab supports mouse buttons and wheel directions, with
 optional horizontal mouse steering disabled by default.
 
+### Default controls (Player 1)
+
+| Game action | Keyboard | Standard gamepad | Generic USB joystick* |
+|---|---|---|---|
+| Cross | Z | South face (Xbox A / PlayStation Cross / Switch B) | Button 1 |
+| Circle | X | East face (Xbox B / PlayStation Circle / Switch A) | Button 2 |
+| Square | A | West face (Xbox X / PlayStation Square / Switch Y) | Button 3 |
+| Triangle | S | North face (Xbox Y / PlayStation Triangle / Switch X) | Button 4 |
+| L1 | Q | L1 / LB | Button 5 |
+| R1 | W | R1 / RB | Button 6 |
+| L2 | E | L2 / LT | Button 7 |
+| R2 | R | R2 / RT | Button 8 |
+| L3 | F | Left stick click | Button 9 |
+| R3 | G | Right stick click | Button 10 |
+| Start | Enter | Start / Menu | Button 11 |
+| Select | Right Shift | Select / Back / View | Button 12 |
+| Up | Up Arrow | D-pad Up | Hat 0 Up |
+| Down | Down Arrow | D-pad Down | Hat 0 Down |
+| Left | Left Arrow | D-pad Left | Hat 0 Left |
+| Right | Right Arrow | D-pad Right | Hat 0 Right |
+
+*For an unrecognized USB joystick, connect it and choose **Reset to Defaults** in the Gamepad tab to apply
+the generic button/hat map. The default mouse bindings are unassigned; horizontal mouse steering is off.
+Player 2 has no keyboard, gamepad, or mouse bindings until configured.
+
 ## Developer build and validation
 
 Contributors need the .NET 10 SDK to create a self-contained Windows x64 package:
@@ -91,7 +116,9 @@ See [docs/DUMPING.md](docs/DUMPING.md) for the accepted input formats and how to
 
 ## Release policy
 
-Builds are distributed only on the official GitHub Releases page. This project does not include any game assets, and all derived output is generated on the player's machine from a disc they own.
+The first release is titled **Race 1.0** and uses tag `v1.0.0`. Builds are distributed only on the official
+GitHub Releases page. This project does not include any game assets, and all derived output is generated on
+the player's machine from a disc they own.
 
 ## Legal disclaimer
 

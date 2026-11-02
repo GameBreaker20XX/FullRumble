@@ -25,7 +25,7 @@ launches it. Later runs reuse the cached library when its version matches the ho
 
 ## Verified
 
-- `dotnet test tests\NascarRumbleRecomp.Tests -c Release --nologo`: 25 passed.
+- `dotnet test tests\NascarRumbleRecomp.Tests -c Release --nologo`: 27 passed.
 - `dotnet build NascarRumbleRecomp -c Release --nologo`: succeeded with no warnings or errors.
 - Self-contained `win-x64` publish contains the runtime/compiler and original recompile support,
   but no generated game library or disc data.
@@ -38,7 +38,7 @@ launches it. Later runs reuse the cached library when its version matches the ho
   closed only the process started for this check.
 - Repository, publish-folder, and ZIP-member legal lint passed. ZIP lint inspects archive members
   and excludes compressed archive size from the payload file-size check.
-- Release archive SHA-256 after input settings update: `34b3ffe13c85254b45e92a6ed856e606462e8837f896c8a8095ce888256dcd98`
+- Local 0.2.0 verification archive SHA-256: `34b3ffe13c85254b45e92a6ed856e606462e8837f896c8a8095ce888256dcd98`
 
 ## Input settings update
 
@@ -51,7 +51,7 @@ launches it. Later runs reuse the cached library when its version matches the ho
 - Regenerated `NascarRumbleRecompLib\patches\recompone-runtime.patch`; it reverse-checks against the
   modified submodule and applies cleanly to a temporary worktree at the pinned RecompOne revision.
 - Runtime and host builds succeeded; `dotnet test tests\NascarRumbleRecomp.Tests -c Release` passed
-  25/25, and repository legal lint passed. The runtime build still reports four warnings in unrelated
+  27/27, and repository legal lint passed. The runtime build still reports four warnings in unrelated
   pre-existing files.
 - Physical DualShock, DualSense, Switch, Xbox, and generic USB hardware were not available for
   verification; device detection and live remapping still need a real-controller check.
@@ -65,4 +65,5 @@ launches it. Later runs reuse the cached library when its version matches the ho
   Preserve them; do not reset or discard them.
 - The main-menu boot is visually verified. In-game race play, audio, saves, and the newly added
   mouse/gamepad settings UI remain unverified.
-- No tag, push, or GitHub release has been created.
+- The first release is planned as **Race 1.0** (tag `v1.0.0`); no release tag or GitHub release has
+  been created.
