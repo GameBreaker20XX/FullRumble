@@ -69,7 +69,7 @@ Open **Settings > Input** to remap keyboard, gamepad, and mouse controls for eit
 uses standard mappings for supported PlayStation, Xbox, and Nintendo controllers; unrecognized USB gamepads
 remain usable through manual button, axis, and hat binding. The Gamepad tab shows the connected device and lets
 you choose how button labels are displayed. The Mouse tab supports mouse buttons and wheel directions, with
-optional horizontal mouse steering disabled by default.
+optional horizontal mouse steering disabled by default. (Remapping for now not available)
 
 ### Default controls (Player 1)
 
@@ -82,10 +82,10 @@ The complete keyboard, standard controller, generic USB joystick, mouse, and Pla
 | Circle | X | East face (Xbox B / PlayStation Circle / Switch A) | Button 2 |
 | Square | A | West face (Xbox X / PlayStation Square / Switch Y) | Button 3 |
 | Triangle | S | North face (Xbox Y / PlayStation Triangle / Switch X) | Button 4 |
-| L1 | Q | L1 / LB | Button 5 |
-| R1 | W | R1 / RB | Button 6 |
-| L2 | E | L2 / LT | Button 7 |
-| R2 | R | R2 / RT | Button 8 |
+| L1 | Q | L1 / LB / L | Button 5 |
+| R1 | W | R1 / RB / R| Button 6 |
+| L2 | E | L2 / LT / ZL| Button 7 |
+| R2 | R | R2 / RT / ZR| Button 8 |
 | L3 | F | Left stick click | Button 9 |
 | R3 | G | Right stick click | Button 10 |
 | Start | Enter | Start / Menu | Button 11 |
