@@ -128,6 +128,12 @@ See [docs/DUMPING.md](docs/DUMPING.md) for the accepted input formats and how to
 - [docs/LEGAL.md](docs/LEGAL.md) — repository and distribution rules
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — runtime and project structure
 
+## Support the project
+
+If you enjoy Full Rumble and would like to support its development, you can contribute through
+[Ko-fi](https://ko-fi.com/gamebreaker20xx). You can also send a payment through PayPal to
+`geoffreymbadinuju@gmail.com`. Support is entirely optional.
+
 ## Release policy
 
 The public release name is separate from the four-part technical file version. **Race 1.1** is technical
