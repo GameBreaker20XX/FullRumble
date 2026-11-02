@@ -1,4 +1,5 @@
 ﻿# Full Rumble
+ <img width="1536" height="672" alt="NASCAR Full Rumble" src="https://github.com/user-attachments/assets/b86ccb27-2c5a-4e88-90f9-7c1a8d69e3f5" />
 
 Full Rumble is a native Windows PC static recompilation of NASCAR Rumble (USA/Canada, SLUS-01068). It is built from a dump you make from a disc you own and run on your own machine.
 
