@@ -12,6 +12,26 @@
 
   <ItemGroup>
     <ProjectReference Include="../thirdparty/RecompOne/RecompOne.Runtime/RecompOne.Runtime.csproj" />
+    <ProjectReference Include="../thirdparty/RecompOne/RecompOne.Recompiler/RecompOne.Recompiler.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="NascarRumbleRecomp.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Content Include="../NascarRumbleRecompLib/config/nascar.json"
+             Link="recompile/config/nascar.json"
+             CopyToOutputDirectory="PreserveNewest"
+             CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="../NascarRumbleRecompLib/config/nascar_funcmap.json"
+             Link="recompile/config/nascar_funcmap.json"
+             CopyToOutputDirectory="PreserveNewest"
+             CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="../NascarRumbleRecompLib/src/**/*.cs"
+             Link="recompile/src/%(RecursiveDir)%(Filename)%(Extension)"
+             CopyToOutputDirectory="PreserveNewest"
+             CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>

@@ -27,13 +27,17 @@ If you cloned without `--recurse-submodules`, run the helper instead:
 
 ## Build and run (no disc)
 
+Developers need the .NET 10 SDK to build Full Rumble. The release package is self-contained, so
+players do not need the .NET SDK or runtime installed:
+
 ```
-dotnet build NascarRumbleRecomp -c Release
-NascarRumbleRecomp\bin\Release\net10.0\FullRumble.exe --version
+dotnet publish NascarRumbleRecomp -c Release -r win-x64 --self-contained true -o publish/app
+publish\app\FullRumble.exe --version
 ```
 
-The executable prints the version, the no-assets notice, and whether a disc is configured in
-`%APPDATA%\FullRumble\config.json`.
+You can also run the helper script in `tools/publish_windows.ps1`, which creates a ZIP that users can
+extract and run directly. The executable prints the version, the no-assets notice, and whether a
+disc is configured in `%APPDATA%\FullRumble\config.json`.
 
 ## Legal lint (local)
 
@@ -42,8 +46,9 @@ python tools/legal_lint.py .
 ```
 
 It fails if any tracked-or-staged artifact contains a forbidden disc extension, a generated or
-recompiled path, or a file above the size limit. The same script runs in CI on every pull
-request, and again on release artifacts before publish.
+recompiled path, or a payload file above the size limit. ZIP archives are inspected member by
+member; the compressed archive's total size is not treated as a payload file. The same script
+runs in CI on every pull request, and again on release artifacts before publish.
 
 ## Verifying a release
 
@@ -96,7 +101,11 @@ expected, not errors.
 
 ### Player path (setup screen)
 
-The same stages will run from the first-run setup screen (add a file or folder, watch the progress
-log, get a `Valid SLUS-01068` badge) so a player never touches the command line. That screen is a
-later milestone; until it lands, use the developer path above.
+On first launch, the setup screen accepts a file or folder, validates the dump, stages a local copy,
+and runs the recompiler and C# compiler inside the app. It uses the runtime compiler bundled in the
+release; it does not invoke `dotnet`, Python, or Git on the player's machine. The generated library
+and intermediate sources stay under `%APPDATA%\FullRumble\build`. The original dump is never moved
+or modified. First setup can take several minutes; progress and failures are shown in the setup log.
 
+For troubleshooting or an advanced developer workflow, the self-contained executable also accepts
+`FullRumble.exe --build-library "path\to\disc.cue"` after validating and staging the player's own dump.

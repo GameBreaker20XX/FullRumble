@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Runtime.InteropServices;
 using System.Text;
 using FullRumble.Config;
@@ -51,6 +52,9 @@ internal static class SetupUi
     private const uint WM_CTLCOLOREDIT = 0x0133;
     private const uint WM_CTLCOLORSTATIC = 0x0138;
     private const uint WM_DPICHANGED = 0x02E0;
+    private const uint WM_APP_START = 0x8001;
+    private const uint WM_APP_LOG = 0x8002;
+    private const uint WM_APP_COMPLETE = 0x8003;
 
     private const uint LB_ADDSTRING = 0x0180;
     private const uint LB_RESETCONTENT = 0x0184;
@@ -65,6 +69,10 @@ internal static class SetupUi
     private static IReadOnlyList<string> _candidates = Array.Empty<string>();
     private static bool _showLog = true;
     private static string? _result;
+    private static string? _autoStartPath;
+    private static bool _busy;
+    private static WorkResult? _workResult;
+    private static readonly ConcurrentQueue<string> WorkLog = new();
 
     private static nint _hwnd;
     private static nint _font;
@@ -76,8 +84,15 @@ internal static class SetupUi
 
     private delegate nint WndProcDelegate(nint hwnd, uint msg, nint wParam, nint lParam);
 
-    public static string? Run(string? previousPath, DiscValidationResult? previous)
+    public static string? Run(string? previousPath, DiscValidationResult? previous, bool autoBuild = false)
     {
+        Log.Clear();
+        _result = null;
+        _busy = false;
+        _workResult = null;
+        _autoStartPath = autoBuild ? previousPath : null;
+        while (WorkLog.TryDequeue(out _)) { }
+
         if (previous is not null)
         {
             _status = previous.Status == DiscStatus.Valid ? DiscStatus.NotAdded : previous.Status;
@@ -101,7 +116,7 @@ internal static class SetupUi
         };
         if (RegisterClassExW(ref wc) == 0) return null;
 
-        _hwnd = CreateWindowExW(WS_EX_CONTROLPARENT, "FullRumbleSetup", "FullRumble Setup",
+        _hwnd = CreateWindowExW(WS_EX_CONTROLPARENT, "FullRumbleSetup", "Full Rumble Setup",
             0x00C00000 | 0x00080000 | 0x00020000,
             0, 0, 760, 620, 0, 0, 0, 0);
         if (_hwnd == 0) return null;
@@ -150,6 +165,19 @@ internal static class SetupUi
             case WM_COMMAND:
                 OnCommand(hwnd, wParam);
                 return 0;
+            case WM_APP_START:
+                if (_autoStartPath is { } path)
+                {
+                    _autoStartPath = null;
+                    StartCheck(path);
+                }
+                return 0;
+            case WM_APP_LOG:
+                AppendQueuedLogs();
+                return 0;
+            case WM_APP_COMPLETE:
+                CompleteCheck(hwnd);
+                return 0;
             case 0x0233: // WM_DROPFILES
             {
                 int count = DragQueryFileW(wParam, 0xFFFFFFFF, null, 0);
@@ -158,7 +186,7 @@ internal static class SetupUi
                     int len = DragQueryFileW(wParam, 0, null, 0) + 1;
                     var buffer = new char[len];
                     if (DragQueryFileW(wParam, 0, buffer, len) > 0)
-                        Check(new string(buffer, 0, len - 1));
+                        StartCheck(new string(buffer, 0, len - 1));
                 }
                 DragFinish(wParam);
                 return 0;
@@ -200,9 +228,9 @@ internal static class SetupUi
         SetWindowPos(hwnd, 0, (screenW - width) / 2, (screenH - height) / 2, width, height, 0x0040);
 
         Static(IdTitle, "Add your disc to play", SS_CENTER, _fontBig);
-        Static(IdLegal, "FullRumble plays NASCAR Rumble (USA, Canada, SLUS-01068) from a dump you make from a disc you own. " +
-            "This project does not include any game assets. See docs/DUMPING.md for how to make one. " +
-            "An accepted disc is copied into the game's own disc folder, so this is a one-time step and your dump stays where it is.", 0, _font);
+        Static(IdLegal, "Full Rumble plays NASCAR Rumble (USA, Canada, SLUS-01068) from a dump you make from a disc you own. " +
+            "The game library is recompiled locally from your dump; Full Rumble includes the compiler, so no .NET SDK is needed. " +
+            "No game assets are included. Your original dump stays where it is.", 0, _font);
         Static(IdStatus, StatusText(), 0, _font);
         Static(IdMessage, _message, 0, _font);
         Button(IdAddFile, "Add disc file...", BS_OWNERDRAW | WS_TABSTOP);
@@ -219,11 +247,13 @@ internal static class SetupUi
         SendMessageW(GetDlgItem(hwnd, IdLog), WM_SETFONT, _font, 1);
         Button(IdSkip, "Skip for now", BS_OWNERDRAW | WS_TABSTOP);
         Static(IdHint, "You can add the disc later from this screen, or with:  FullRumble --set-disc PATH", 0, _font);
-        Static(IdVersion, $"FullRumble {Version}", 0x00000002, _font);
+        Static(IdVersion, $"Full Rumble {Version}", 0x00000002, _font);
 
         SendMessageW(GetDlgItem(hwnd, IdShowLog), BM_SETCHECK, 1, 0);
         DragAcceptFiles(hwnd, true);
         Layout();
+        if (_autoStartPath is not null)
+            PostMessageW(hwnd, WM_APP_START, 0, 0);
     }
 
     private static void RefreshFonts()
@@ -295,11 +325,12 @@ internal static class SetupUi
         long wp = wParam.ToInt64();
         int notify = (int)((wp >> 16) & 0xFFFF);
         int id = (int)(wp & 0xFFFF);
+        if (_busy && id is not (IdCopyLog or IdSkip)) return;
 
         if (id == IdCandidates && notify == 1) // LBN_SELCHANGE
         {
             int sel = (int)SendMessageW(GetDlgItem(hwnd, IdCandidates), LB_GETCURSEL, 0, 0).ToInt64();
-            if (sel >= 0 && sel < _candidates.Count) Check(_candidates[sel]);
+            if (sel >= 0 && sel < _candidates.Count) StartCheck(_candidates[sel]);
             return;
         }
         if (id == IdShowLog)
@@ -311,8 +342,8 @@ internal static class SetupUi
 
         switch (id)
         {
-            case IdAddFile: Check(OpenFile(hwnd)); break;
-            case IdAddFolder: Check(OpenFolder(hwnd)); break;
+            case IdAddFile: StartCheck(OpenFile(hwnd)); break;
+            case IdAddFolder: StartCheck(OpenFolder(hwnd)); break;
             case IdCopyLog: CopyToClipboard(string.Join(Environment.NewLine, Log)); break;
             case IdSkip: _result = null; DestroyWindow(hwnd); break;
         }
@@ -345,49 +376,117 @@ internal static class SetupUi
         return true;
     }
 
-    private static void Check(string? path)
+    private static void StartCheck(string? path)
     {
         if (string.IsNullOrWhiteSpace(path)) return;
+        if (_busy) return;
+
+        _busy = true;
+        _workResult = null;
+        while (WorkLog.TryDequeue(out _)) { }
         _status = DiscStatus.Checking;
-        _message = "Checking...";
+        _message = "Checking your disc. The first setup also builds the game locally and can take several minutes...";
         SetWindowTextW(GetDlgItem(_hwnd, IdStatus), StatusText());
         SetWindowTextW(GetDlgItem(_hwnd, IdMessage), _message);
+        SetWindowTextW(GetDlgItem(_hwnd, IdLog), string.Join(Environment.NewLine, Log));
+        EnableWindow(GetDlgItem(_hwnd, IdAddFile), false);
+        EnableWindow(GetDlgItem(_hwnd, IdAddFolder), false);
+        EnableWindow(GetDlgItem(_hwnd, IdCandidates), false);
         UpdateWindow(_hwnd);
 
         Log.Add($"checking {path}");
-        DiscValidationResult result;
+        SetWindowTextW(GetDlgItem(_hwnd, IdLog), string.Join(Environment.NewLine, Log));
+        nint window = _hwnd;
+        _ = Task.Run(() => ProcessDisc(window, path));
+    }
+
+    private static void ProcessDisc(nint window, string path)
+    {
+        WorkResult result;
+        DiscStatus failureStatus = DiscStatus.Invalid;
         try
         {
-            result = DiscValidator.Validate(path);
+            DiscValidationResult validation = DiscValidator.Validate(path);
+            foreach (string check in validation.Checks)
+                QueueLog(window, check);
+
+            if (validation.Status != DiscStatus.Valid)
+            {
+                result = new WorkResult(validation.Status, validation.Message, validation.Candidates, null);
+            }
+            else
+            {
+                failureStatus = DiscStatus.Valid;
+                QueueLog(window, "Copying the accepted disc into Full Rumble's local disc folder...");
+                string staged = DiscLibrary.EnsureStaged(path, log: line => QueueLog(window, line));
+                if (!File.Exists(staged) ||
+                    !Path.GetExtension(staged).Equals(".cue", StringComparison.OrdinalIgnoreCase))
+                    throw new IOException("The disc could not be staged as a cue sheet. Check available disk space and folder permissions.");
+
+                var config = UserConfig.Load();
+                config.DiscPath = staged;
+                config.Save();
+                QueueLog(window, $"Saved disc choice to {UserConfig.FilePath}");
+
+                if (!RecompilePipeline.HasCurrentLibrary())
+                    RecompilePipeline.Build(staged, line => QueueLog(window, line));
+
+                result = new WorkResult(DiscStatus.Valid, "Ready to play.", validation.Candidates, staged);
+            }
         }
         catch (Exception error)
         {
-            result = new DiscValidationResult(DiscStatus.Invalid, $"Unexpected error: {error.Message}",
-                Array.Empty<string>(), Array.Empty<string>(), null, null);
+            QueueLog(window, error.ToString());
+            result = new WorkResult(failureStatus, $"Setup failed: {error.Message}", Array.Empty<string>(), null);
         }
 
+        Interlocked.Exchange(ref _workResult, result);
+        PostMessageW(window, WM_APP_COMPLETE, 0, 0);
+    }
+
+    private static void QueueLog(nint window, string line)
+    {
+        WorkLog.Enqueue(line);
+        PostMessageW(window, WM_APP_LOG, 0, 0);
+    }
+
+    private static void AppendQueuedLogs()
+    {
+        bool changed = false;
+        while (WorkLog.TryDequeue(out string? line))
+        {
+            Log.Add(line);
+            changed = true;
+        }
+        if (changed)
+        {
+            SetWindowTextW(GetDlgItem(_hwnd, IdLog), string.Join(Environment.NewLine, Log));
+            SendMessageW(GetDlgItem(_hwnd, IdLog), 0x00B1, -1, -1);
+            SendMessageW(GetDlgItem(_hwnd, IdLog), 0x00B7, 0, 0);
+        }
+    }
+
+    private static void CompleteCheck(nint hwnd)
+    {
+        AppendQueuedLogs();
+        WorkResult result = Interlocked.Exchange(ref _workResult, null)
+            ?? throw new InvalidOperationException("The setup worker completed without a result.");
+        _busy = false;
         _status = result.Status;
         _message = result.Message;
         _candidates = result.Candidates;
-        Log.AddRange(result.Checks);
 
-        if (result.Status == DiscStatus.Valid)
+        if (result.StagedPath is not null)
         {
-            _message = "Copying the disc into the game folder...";
-            SetWindowTextW(GetDlgItem(_hwnd, IdMessage), _message);
-            UpdateWindow(_hwnd);
-
-            string staged = DiscLibrary.EnsureStaged(path, log: Log.Add);
-            var config = UserConfig.Load();
-            config.DiscPath = staged;
-            config.Save();
-            Log.Add($"saved to {UserConfig.FilePath}");
-            _result = staged;
-            DestroyWindow(_hwnd);
+            _result = result.StagedPath;
+            DestroyWindow(hwnd);
             return;
         }
 
         Log.Add($"result: {result.Status} - {result.Message}");
+        EnableWindow(GetDlgItem(hwnd, IdAddFile), true);
+        EnableWindow(GetDlgItem(hwnd, IdAddFolder), true);
+        EnableWindow(GetDlgItem(hwnd, IdCandidates), true);
         SetWindowTextW(GetDlgItem(_hwnd, IdStatus), StatusText());
         SetWindowTextW(GetDlgItem(_hwnd, IdMessage), _message);
         SetWindowTextW(GetDlgItem(_hwnd, IdLog), string.Join(Environment.NewLine, Log));
@@ -397,6 +496,12 @@ internal static class SetupUi
         Layout();
         UpdateWindow(_hwnd);
     }
+
+    private sealed record WorkResult(
+        DiscStatus Status,
+        string Message,
+        IReadOnlyList<string> Candidates,
+        string? StagedPath);
 
     private static string StatusText() => _status switch
     {
@@ -575,6 +680,8 @@ internal static class SetupUi
     [DllImport("user32.dll")] private static extern bool GetClientRect(nint hwnd, out Rect rect);
     [DllImport("user32.dll")] private static extern int GetWindowLongPtrW(nint hwnd, int index);
     [DllImport("user32.dll")] private static extern nint SendMessageW(nint hwnd, uint msg, nint wParam, nint lParam);
+    [DllImport("user32.dll")] private static extern bool PostMessageW(nint hwnd, uint msg, nint wParam, nint lParam);
+    [DllImport("user32.dll")] private static extern bool EnableWindow(nint hwnd, bool enable);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern nint SendMessageW(nint hwnd, uint msg, nint wParam, string lParam);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern bool SetWindowTextW(nint hwnd, string text);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern int GetWindowTextW(nint hwnd, StringBuilder text, int count);

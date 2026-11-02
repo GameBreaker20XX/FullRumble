@@ -1,6 +1,6 @@
 # Architecture
 
-FullRumble mirrors the layout of UnleashedRecomp (structure only; no code or text is copied
+Full Rumble mirrors the layout of UnleashedRecomp (structure only; no code or text is copied
 from that GPL-3.0 project): an application project, a "Lib" project that owns the recompiler
 configuration and the generated code, and a resources project that holds only assets we made
 ourselves.
@@ -19,23 +19,29 @@ ourselves.
 
 ## Runtime stack
 
-- **Language/build**: C# on .NET 10, `dotnet build`. No CMake or vcpkg.
+- **Language/build**: C# on .NET 10, `dotnet build`. No CMake or vcpkg. The Windows release is
+  self-contained; players do not need to install .NET.
 - **Recompiler**: RecompOne (MIT) translates the MIPS R3000A code of `SLUS_010.68` ahead of time
   into C# against a `CpuContext`; the same project supplies the PS1 hardware runtime (GPU with
   an OpenGL backend, GTE, SPU including XA audio, CD-ROM controller, MDEC, DMA, timers,
   controllers, memory cards, and an OpenBIOS-style BIOS, so no Sony BIOS is needed).
+- **Player-side compilation**: The app invokes the recompiler as a library and uses bundled
+  Roslyn assemblies to compile the generated sources locally. No SDK, Git, Python, or external
+  tool process is needed on the player's machine.
 - **Function map**: `NascarRumbleRecompLib/config/nascar_funcmap.json`, derived from the
   MIT-licensed NASCAR Rumble ModSDK Ghidra analysis (attribution retained in LICENSE).
 
-## Data flow (target state, milestone by milestone)
+## Data flow
 
 1. Player supplies `.cue`+`.bin`, raw `.bin`, or cooked `.iso`.
 2. The validator reads the ISO9660 volume and `SYSTEM.CNF`, confirms `SLUS-01068`, and checks
    the SHA-256 of `SLUS_010.68`.
-3. The recompiler runs **on the player's machine** and writes C# into
-   `NascarRumbleRecompLib/generated/` (git-ignored).
-4. That code compiles into `NascarRumbleRecompLib.dll`, a separate library the prebuilt host
-   loads at startup. Host and runtime build and release without any disc.
+3. On first launch the recompiler runs **on the player's machine**, using its bundled config,
+   function map and hook sources. Generated C# and intermediate files stay in
+   `%APPDATA%\FullRumble\build`.
+4. The bundled C# compiler builds `NascarRumbleRecompLib.dll` locally; the host loads that library
+   on startup. The release includes the compiler and original project sources, never game-derived
+   output.
 5. At play time the host loads the library, hands it the validated disc image for streaming
    (video, audio, track data), and the runtime drives frames, input and saves.
 
@@ -45,4 +51,5 @@ enforces this in CI.
 ## Configuration
 
 User settings live in `%APPDATA%\FullRumble\config.json` (Windows). The disc path chosen in
-setup is stored there; the app re-validates it on every launch.
+setup is stored there; the app re-validates it on every launch. The generated library is cached
+under `%APPDATA%\FullRumble\build` and reused when its version matches the host.

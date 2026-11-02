@@ -15,6 +15,13 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: "10.0.x"
+      - name: Apply Full Rumble runtime changes
+        shell: pwsh
+        run: |
+          $submodule = Join-Path $PWD 'thirdparty\RecompOne'
+          $patch = Join-Path $PWD 'NascarRumbleRecompLib\patches\recompone-runtime.patch'
+          git -C $submodule apply --unidiff-zero $patch
+          if ($LASTEXITCODE -ne 0) { throw 'Failed to apply the pinned Full Rumble runtime patch.' }
       - name: Build host (no disc present)
         run: dotnet build NascarRumbleRecomp -c Release
       - name: Unit tests (synthetic images only)

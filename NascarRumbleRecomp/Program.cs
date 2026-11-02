@@ -7,7 +7,7 @@ string version = Assembly.GetEntryAssembly()!.GetName().Version?.ToString(3) ?? 
 
 if (args.Length > 0 && args[0] == "--version")
 {
-    Console.WriteLine($"FullRumble {version}");
+    Console.WriteLine($"Full Rumble {version}");
     return 0;
 }
 
@@ -39,6 +39,37 @@ if (args.Length == 2 && args[0] == "--check-disc")
     return result.Status == DiscStatus.Valid ? 0 : 1;
 }
 
+if (args.Length == 2 && args[0] == "--build-library")
+{
+    try
+    {
+        string source = Path.GetFullPath(args[1]);
+        var validation = DiscValidator.Validate(source);
+        foreach (string check in validation.Checks)
+            Console.WriteLine($"  [ok] {check}");
+        if (validation.Status != DiscStatus.Valid)
+        {
+            Console.Error.WriteLine($"INVALID: {validation.Message}");
+            foreach (string candidate in validation.Candidates)
+                Console.Error.WriteLine($"  candidate: {candidate}");
+            return 1;
+        }
+
+        string staged = DiscLibrary.EnsureStaged(source, log: Console.WriteLine);
+        var config = UserConfig.Load();
+        config.DiscPath = staged;
+        config.Save();
+        RecompilePipeline.Build(staged, Console.WriteLine);
+        Console.WriteLine($"Game library ready: {UserConfig.GameLibraryPath}");
+        return 0;
+    }
+    catch (Exception error)
+    {
+        Console.Error.WriteLine($"Could not build the game library: {error}");
+        return 1;
+    }
+}
+
 if (args.Length == 4 && args[0] == "--extract")
 {
     try
@@ -57,7 +88,7 @@ if (args.Length == 4 && args[0] == "--extract")
 
 if (args.Length > 0)
 {
-    Console.Error.WriteLine("usage: FullRumble [--version | --set-disc PATH | --check-disc PATH | --extract IMAGE DISCPATH OUT]");
+    Console.Error.WriteLine("usage: Full Rumble [--version | --set-disc PATH | --check-disc PATH | --build-library PATH | --extract IMAGE DISCPATH OUT]");
     Console.Error.WriteLine("      --set-disc (alias --install) saves the disc path the setup screen would save.");
     return 2;
 }
@@ -78,7 +109,7 @@ if (configured is not null)
     }
 
     previous = DiscValidator.Validate(boot);
-    if (previous.Status == DiscStatus.Valid)
+    if (previous.Status == DiscStatus.Valid && RecompilePipeline.HasCurrentLibrary())
     {
         // Boot from the copy the game keeps for itself, so a lone .bin or .iso becomes the .cue
         // the runtime reads and the player is never asked for the disc again.
@@ -90,6 +121,13 @@ if (configured is not null)
         }
 
         return GameBoot.Run(staged);
+    }
+
+    if (previous.Status == DiscStatus.Valid)
+    {
+        GameBoot.HideConsole();
+        string? built = SetupUi.Run(configured, previous, autoBuild: true);
+        return built is null ? 0 : GameBoot.Run(built);
     }
 }
 

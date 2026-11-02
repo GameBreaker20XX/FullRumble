@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""Legal gate: fail if any artifact contains game-derived or oversized content.
+"""Legal gate: reject game-media artifacts and oversized payload files.
 
 Usage:
     python tools/legal_lint.py <root> [--artifacts]
 
 Default mode scans a repository tree, skipping VCS metadata and third-party
-submodule contents. --artifacts scans a release staging directory with no skips.
+submodule contents. --artifacts scans a release staging directory, including
+the members of ZIP archives.
 """
 
 from __future__ import annotations
@@ -13,7 +14,9 @@ from __future__ import annotations
 import argparse
 import subprocess
 import sys
+import zipfile
 from pathlib import Path
+from pathlib import PurePosixPath
 
 FORBIDDEN_EXTENSIONS = {
     ".bin", ".cue", ".iso", ".img", ".mdf", ".mds", ".chd", ".sav", ".mcd",
@@ -28,7 +31,10 @@ def tracked_files(root: Path) -> list[Path] | None:
     if not (root / ".git").exists():
         return None
     result = subprocess.run(
-        ["git", "ls-files", "-z"], cwd=root, capture_output=True, check=True
+        ["git", "ls-files", "--cached", "--others", "--exclude-standard", "-z"],
+        cwd=root,
+        capture_output=True,
+        check=True,
     )
     return [root / name for name in result.stdout.decode("utf-8").split("\0") if name]
 
@@ -45,21 +51,41 @@ def scan(root: Path, artifacts_mode: bool) -> list[str]:
                 if p.is_file() and not ({part.lower() for part in p.relative_to(root).parts[:-1]} & SKIP_DIRS)
             ]
     for path in files:
-        relative = path.relative_to(root)
-        lowered = {part.lower() for part in relative.parts}
-        name = path.name.lower()
+        relative = PurePosixPath(path.relative_to(root).as_posix())
+        check_item(relative, path.stat().st_size, violations, check_size=path.suffix.lower() != ".zip")
 
-        if path.suffix.lower() in FORBIDDEN_EXTENSIONS:
-            violations.append(f"forbidden extension: {relative}")
-        if lowered & FORBIDDEN_PATH_PARTS:
-            violations.append(f"generated/recompiled path: {relative}")
-        if any(marker in name for marker in FORBIDDEN_NAME_MARKERS):
-            violations.append(f"game-derived name: {relative}")
-        if path.stat().st_size > MAX_FILE_BYTES:
-            violations.append(
-                f"size limit ({MAX_FILE_BYTES // (1024 * 1024)} MiB) exceeded: {relative}"
-            )
+        if path.suffix.lower() == ".zip":
+            try:
+                with zipfile.ZipFile(path) as archive:
+                    for member in archive.infolist():
+                        if member.is_dir():
+                            continue
+                        member_path = PurePosixPath(member.filename.replace("\\", "/"))
+                        check_item(
+                            PurePosixPath(f"{relative}!/{member_path}"),
+                            member.file_size,
+                            violations,
+                        )
+            except zipfile.BadZipFile:
+                violations.append(f"invalid ZIP archive: {relative}")
     return violations
+
+
+def check_item(relative: PurePosixPath, size: int, violations: list[str],
+               check_size: bool = True) -> None:
+    lowered = {part.lower() for part in relative.parts}
+    name = relative.name.lower()
+
+    if relative.suffix.lower() in FORBIDDEN_EXTENSIONS:
+        violations.append(f"forbidden extension: {relative}")
+    if lowered & FORBIDDEN_PATH_PARTS:
+        violations.append(f"generated/recompiled path: {relative}")
+    if any(marker in name for marker in FORBIDDEN_NAME_MARKERS):
+        violations.append(f"game-derived name: {relative}")
+    if check_size and size > MAX_FILE_BYTES:
+        violations.append(
+            f"size limit ({MAX_FILE_BYTES // (1024 * 1024)} MiB) exceeded: {relative}"
+        )
 
 
 def main() -> int:

@@ -174,6 +174,50 @@ index 18deeb2..841e9de 100644
                      else _dataReady = false;
                  }
                  else if (_index == 1)
+diff --git a/RecompOne.Runtime/Config/GameConfig.cs b/RecompOne.Runtime/Config/GameConfig.cs
+index 68e1276..4d73275 100644
+--- a/RecompOne.Runtime/Config/GameConfig.cs
++++ b/RecompOne.Runtime/Config/GameConfig.cs
+@@ -57,6 +57,26 @@ public class GamepadBindings
+     };
+ }
+ 
++public class MouseBindings
++{
++    public int[] Cross { get; set; } = [];
++    public int[] Circle { get; set; } = [];
++    public int[] Square { get; set; } = [];
++    public int[] Triangle { get; set; } = [];
++    public int[] L1 { get; set; } = [];
++    public int[] R1 { get; set; } = [];
++    public int[] L2 { get; set; } = [];
++    public int[] R2 { get; set; } = [];
++    public int[] L3 { get; set; } = [];
++    public int[] R3 { get; set; } = [];
++    public int[] Start { get; set; } = [];
++    public int[] Select { get; set; } = [];
++    public int[] Up { get; set; } = [];
++    public int[] Down { get; set; } = [];
++    public int[] Left { get; set; } = [];
++    public int[] Right { get; set; } = [];
++}
++
+ public class GameConfig
+ {
+     public string CdPath { get; set; } = "";
+@@ -66,5 +86,12 @@ public class GameConfig
+     public KeyBindings Keys2 { get; set; } = KeyBindings.Empty();
+     public GamepadBindings Pad { get; set; } = new();
+     public GamepadBindings Pad2 { get; set; } = GamepadBindings.Empty();
++    public MouseBindings Mouse { get; set; } = new();
++    public MouseBindings Mouse2 { get; set; } = new();
++    public string PadLayout { get; set; } = "Auto";
++    public string Pad2Layout { get; set; } = "Auto";
++    public bool MouseSteeringEnabled { get; set; }
++    public float MouseSteeringSensitivity { get; set; } = 0.02f;
++    public float MouseSteeringDeadzone { get; set; } = 0.08f;
+     public List<string> ActiveMods { get; set; } = [];
+ }
 diff --git a/RecompOne.Runtime/Gpu/Hle/Gl/GlBackend.cs b/RecompOne.Runtime/Gpu/Hle/Gl/GlBackend.cs
 index c3792b6..1461bd0 100644
 --- a/RecompOne.Runtime/Gpu/Hle/Gl/GlBackend.cs
@@ -498,7 +542,7 @@ index fff4026..9a0489a 100644
          byte flags = Ram[(addr + 1) & (RamSize - 1)];
  
 diff --git a/RecompOne.Runtime/Host/InputManager.cs b/RecompOne.Runtime/Host/InputManager.cs
-index 928d144..17b4a80 100644
+index 928d144..5519c3b 100644
 --- a/RecompOne.Runtime/Host/InputManager.cs
 +++ b/RecompOne.Runtime/Host/InputManager.cs
 @@ -1,4 +1,5 @@
@@ -507,67 +551,239 @@ index 928d144..17b4a80 100644
  using Silk.NET.Input;
  using Silk.NET.SDL;
  using RecompOne.Runtime.Config;
-@@ -72,6 +73,41 @@ internal static unsafe class InputManager
+@@ -19,6 +20,13 @@ internal static unsafe class InputManager
+     static Sdl?_sdl;
+     static GameController* _pad0;
+     static GameController* _pad1;
++    static Joystick* _joy0;
++    static Joystick* _joy1;
++    static int _pendingWheel;
++    static int _frameWheel;
++    static int _mouseDeltaX;
++    static Vector2 _lastMousePosition;
++    static bool _hasMousePosition;
  
-     public static bool IsPadConnected(int pad) => pad == 0 ? _pad0 != null : _pad1 != null;
+     const int AxisThreshold = 8000;
+     const int StickThreshold = 16000;
+@@ -32,10 +40,20 @@ internal static unsafe class InputManager
+     const int RightStickRight = 107;
+     const int RightStickUp = 108;
+     const int RightStickDown = 109;
++    const int RawButtonBase = 1000;
++    const int RawAxisBase = 2000;
++    const int RawHatBase = 3000;
++    const int MouseWheelUp = 100;
++    const int MouseWheelDown = 101;
++    const uint SdlJoyDeviceAdded = 0x605;
++    const uint SdlJoyDeviceRemoved = 0x606;
++    const byte HatUp = 0x01;
++    const byte HatRight = 0x02;
++    const byte HatDown = 0x04;
++    const byte HatLeft = 0x08;
+     static bool _topBarToggle;
+     static bool _fullscreenToggle;
  
+-    
+     public static bool ConsumeTopBarToggle() { var v = _topBarToggle; _topBarToggle = false; return v; }
+     public static bool ConsumeFullscreenToggle(){ var v = _fullscreenToggle; _fullscreenToggle = false; return v; }
+ 
+@@ -65,12 +83,112 @@ internal static unsafe class InputManager
+             _sdl.InitSubSystem(Sdl.InitGamecontroller);
+             Rescan();
+         }
+-        catch { _sdl = null; }
++        catch (Exception ex)
++        {
++            Console.Error.WriteLine($"SDL gamepad input initialization failed: {ex.Message}");
++            _sdl = null;
++        }
++    }
++
++    public static bool IsConnected => _pad0 != null || _joy0 != null;
++
++    public static bool IsPadConnected(int pad) =>
++        pad == 0 ? _pad0 != null || _joy0 != null : _pad1 != null || _joy1 != null;
++
++    public static bool IsMouseButtonDown => _mouse is not null &&
++        Enum.GetValues<MouseButton>().Any(button =>
++            button != MouseButton.Unknown && _mouse.IsButtonPressed(button));
++
 +    public static GamepadSnapshot GetGamepadSnapshot(int pad = 0)
 +    {
 +        var ctrl = pad == 0 ? _pad0 : _pad1;
-+        if (_sdl == null || ctrl == null) return GamepadSnapshot.Disconnected;
++        var joy = pad == 0 ? _joy0 : _joy1;
++        var sdl = _sdl;
++        if (sdl == null) return GamepadSnapshot.Disconnected;
++
++        if (ctrl == null && joy != null)
++        {
++            var activeRaw = GetActiveJoystickInputs(joy);
++            short Axis(int index) => index < sdl.JoystickNumAxes(joy)
++                ? sdl.JoystickGetAxis(joy, index)
++                : (short)0;
++            nint rawName = (nint)sdl.JoystickName(joy);
++            string rawDeviceName = rawName == 0
++                ? "Generic USB gamepad"
++                : Marshal.PtrToStringUTF8(rawName) ?? "Generic USB gamepad";
++            return new GamepadSnapshot(
++                true,
++                $"Generic joystick: {rawDeviceName}",
++                [.. activeRaw],
++                NormalizeAxis(Axis(0)),
++                NormalizeAxis(Axis(1)),
++                NormalizeAxis(Axis(2)),
++                NormalizeAxis(Axis(3)),
++                NormalizeTrigger(Axis(4)),
++                NormalizeTrigger(Axis(5)));
++        }
++        if (ctrl == null) return GamepadSnapshot.Disconnected;
 +
 +        var active = new List<int>();
 +        for (int b = 0; b < (int)GameControllerButton.Max; b++)
-+            if (_sdl.GameControllerGetButton(ctrl, (GameControllerButton)b) != 0)
++            if (sdl.GameControllerGetButton(ctrl, (GameControllerButton)b) != 0)
 +                active.Add(b);
 +        if (Pressed(ctrl, LeftTrigger)) active.Add(LeftTrigger);
 +        if (Pressed(ctrl, RightTrigger)) active.Add(RightTrigger);
 +        for (int b = LeftStickLeft; b <= RightStickDown; b++)
 +            if (Pressed(ctrl, b)) active.Add(b);
 +
-+        var namePtr = (nint)_sdl.GameControllerName(ctrl);
++        var namePtr = (nint)sdl.GameControllerName(ctrl);
 +        string name = namePtr == 0 ? "Gamepad" : Marshal.PtrToStringUTF8(namePtr) ?? "Gamepad";
 +        return new GamepadSnapshot(
 +            true, name, [.. active],
-+            NormalizeAxis(_sdl.GameControllerGetAxis(ctrl, GameControllerAxis.Leftx)),
-+            NormalizeAxis(_sdl.GameControllerGetAxis(ctrl, GameControllerAxis.Lefty)),
-+            NormalizeAxis(_sdl.GameControllerGetAxis(ctrl, GameControllerAxis.Rightx)),
-+            NormalizeAxis(_sdl.GameControllerGetAxis(ctrl, GameControllerAxis.Righty)),
-+            NormalizeTrigger(_sdl.GameControllerGetAxis(ctrl, GameControllerAxis.Triggerleft)),
-+            NormalizeTrigger(_sdl.GameControllerGetAxis(ctrl, GameControllerAxis.Triggerright)));
++            NormalizeAxis(sdl.GameControllerGetAxis(ctrl, GameControllerAxis.Leftx)),
++            NormalizeAxis(sdl.GameControllerGetAxis(ctrl, GameControllerAxis.Lefty)),
++            NormalizeAxis(sdl.GameControllerGetAxis(ctrl, GameControllerAxis.Rightx)),
++            NormalizeAxis(sdl.GameControllerGetAxis(ctrl, GameControllerAxis.Righty)),
++            NormalizeTrigger(sdl.GameControllerGetAxis(ctrl, GameControllerAxis.Triggerleft)),
++            NormalizeTrigger(sdl.GameControllerGetAxis(ctrl, GameControllerAxis.Triggerright)));
 +    }
 +
 +    public static bool ApplyStandardGamepadMapping(int pad = 0)
 +    {
 +        if (!IsPadConnected(pad)) return false;
-+        if (pad == 0) ConfigManager.Game.Pad = new GamepadBindings();
-+        else ConfigManager.Game.Pad2 = new GamepadBindings();
++        bool rawJoystick = pad == 0 ? _joy0 != null : _joy1 != null;
++        GamepadBindings bindings = rawJoystick ? GenericJoystickBindings() : new GamepadBindings();
++        if (pad == 0) ConfigManager.Game.Pad = bindings;
++        else ConfigManager.Game.Pad2 = bindings;
 +        ConfigManager.SaveGame();
 +        return true;
+     }
+ 
+-    public static bool IsConnected => _pad0 != null;
++    public static int? GetFirstPressedMouseInput()
++    {
++        if (_mouse != null)
++        {
++            foreach (MouseButton button in Enum.GetValues<MouseButton>())
++                if (button != MouseButton.Unknown && _mouse.IsButtonPressed(button))
++                    return (int)button;
++        }
++        return _frameWheel > 0 ? MouseWheelUp : _frameWheel < 0 ? MouseWheelDown : null;
 +    }
-+
+ 
+-    public static bool IsPadConnected(int pad) => pad == 0 ? _pad0 != null : _pad1 != null;
++    public static int? GetFirstPressedPadButton(int pad = 0)
++    {
++        var ctrl = pad == 0 ? _pad0 : _pad1;
++        var joy = pad == 0 ? _joy0 : _joy1;
++        if (_sdl == null) return null;
++        if (ctrl != null)
++        {
++            for (int b = 0; b < (int)GameControllerButton.Max; b++)
++                if (_sdl.GameControllerGetButton(ctrl, (GameControllerButton)b) != 0)
++                    return b;
++            if (Pressed(ctrl, LeftTrigger)) return LeftTrigger;
++            if (Pressed(ctrl, RightTrigger)) return RightTrigger;
++            for (int b = LeftStickLeft; b <= RightStickDown; b++)
++                if (Pressed(ctrl, b)) return b;
++        }
++        return joy == null ? null : GetFirstPressedJoystickInput(joy);
++    }
+ 
      public static bool IsKeyDown(Key k) => _keyboard?.IsKeyPressed(k) ?? false;
  
-     public static void Poll()
-@@ -78,7 +114,17 @@ internal static unsafe class InputManager
-     {
+@@ -79,23 +197,21 @@ internal static unsafe class InputManager
          PollGamepadEvents();
          PollKeyboard();
          PollGamepads();
-         Controller.Connected2 = _pad1 != null || HasAnyKey(ConfigManager.Game.Keys2);
-+        if (_pad0 == null) ApplyKeyboardAnalog();
+-        Controller.Connected2 = _pad1 != null || HasAnyKey(ConfigManager.Game.Keys2);
++        _frameWheel = Interlocked.Exchange(ref _pendingWheel, 0);
++        Controller.Connected2 = _pad1 != null || _joy1 != null || HasAnyKey(ConfigManager.Game.Keys2);
++        if (_pad0 == null && _joy0 == null) ApplyKeyboardAnalog();
++        PollMouse();
      }
  
+-    public static int? GetFirstPressedPadButton(int pad = 0)
 +    // Menus and steering read the analog stick; mirror the digital pad onto it for keyboard-only players.
 +    static void ApplyKeyboardAnalog()
-+    {
+     {
+-        var ctrl = pad == 0 ? _pad0 : _pad1;
+-        if (_sdl == null || ctrl == null) return null;
+-        for (int b = 0; b < (int)GameControllerButton.Max; b++)
+-            if (_sdl.GameControllerGetButton(ctrl, (GameControllerButton)b) != 0)
+-                return b;
+-        if (Pressed(ctrl, LeftTrigger)) return LeftTrigger;
+-        if (Pressed(ctrl, RightTrigger)) return RightTrigger;
+-        for (int b = LeftStickLeft; b <= RightStickDown; b++)
+-            if (Pressed(ctrl, b)) return b;
+-        return null;
 +        Controller.LeftX = KeyAxis(Controller.State, Controller.Left, Controller.Right);
 +        Controller.LeftY = KeyAxis(Controller.State, Controller.Up, Controller.Down);
-+    }
-+
+     }
+ 
 +    static byte KeyAxis(ushort state, ushort negative, ushort positive) =>
 +        (state & positive) == 0 ? (byte)0xFF : (state & negative) == 0 ? (byte)0x00 : (byte)0x80;
-@@ -186,28 +232,45 @@ internal static unsafe class InputManager
+     static bool IsStickBinding(int b) => b is >= LeftStickLeft and <= RightStickDown;
+ 
+     static (GameControllerAxis Axis, bool Positive) AxisBinding(int b) => b switch
+@@ -128,6 +244,7 @@ internal static unsafe class InputManager
+         {
+             if (ev.Type == (uint)EventType.Controllerdeviceadded) changed = true;
+             if (ev.Type == (uint)EventType.Controllerdeviceremoved) changed = true;
++            if (ev.Type == SdlJoyDeviceAdded || ev.Type == SdlJoyDeviceRemoved) changed = true;
+             if (!anyCtrl) continue;
+             if (ev.Type == (uint)EventType.Controllerbuttondown || ev.Type == (uint)EventType.Controllerbuttonup)
+                 EventBus.Dispatch(new ControllerEvent
+@@ -151,6 +268,8 @@ internal static unsafe class InputManager
+     {
+         if (_pad0 != null) { _sdl?.GameControllerClose(_pad0); _pad0 = null; }
+         if (_pad1 != null) { _sdl?.GameControllerClose(_pad1); _pad1 = null; }
++        if (_joy0 != null) { _sdl?.JoystickClose(_joy0); _joy0 = null; }
++        if (_joy1 != null) { _sdl?.JoystickClose(_joy1); _joy1 = null; }
+     }
+ 
+     static void Rescan()
+@@ -158,13 +277,23 @@ internal static unsafe class InputManager
+         if (_sdl == null) return;
+         CloseControllers();
+         int n = _sdl.NumJoysticks();
++        int nextPad = 0;
+         for (int i = 0; i < n; i++)
+         {
+-            if (_sdl.IsGameController(i) != SdlBool.True) continue;
+-            var ctrl = _sdl.GameControllerOpen(i);
+-            if (ctrl == null) continue;
+-            if (_pad0 == null) _pad0 = ctrl;
+-            else { _pad1 = ctrl; break; }
++            if (_sdl.IsGameController(i) == SdlBool.True)
++            {
++                var ctrl = _sdl.GameControllerOpen(i);
++                if (ctrl == null) continue;
++                if (nextPad++ == 0) _pad0 = ctrl;
++                else { _pad1 = ctrl; break; }
++            }
++            else
++            {
++                var joy = _sdl.JoystickOpen(i);
++                if (joy == null) continue;
++                if (nextPad++ == 0) _joy0 = joy;
++                else { _joy1 = joy; break; }
++            }
+         }
+     }
+ 
+@@ -186,7 +315,7 @@ internal static unsafe class InputManager
          ushort s = 0xFFFF;
          void B(string keyName, ushort bit)
          {
@@ -576,23 +792,7 @@ index 928d144..17b4a80 100644
                  s &= (ushort)~bit;
          }
  
-         B(cfg.Cross,    Controller.Cross);
-         B(cfg.Circle,   Controller.Circle);
-         B(cfg.Square,   Controller.Square);
-         B(cfg.Triangle, Controller.Triangle);
-         B(cfg.L1,       Controller.L1);
-         B(cfg.R1,       Controller.R1);
-         B(cfg.L2,       Controller.L2);
-         B(cfg.R2,       Controller.R2);
-         B(cfg.L3,       Controller.L3);
-         B(cfg.R3,       Controller.R3);
-         B(cfg.Start,    Controller.Start);
-         B(cfg.Select,   Controller.Select);
-         B(cfg.Up,       Controller.Up);
-         B(cfg.Down,     Controller.Down);
-         B(cfg.Left,     Controller.Left);
-         B(cfg.Right,    Controller.Right);
- 
+@@ -210,6 +339,23 @@ internal static unsafe class InputManager
          return s;
      }
  
@@ -614,7 +814,228 @@ index 928d144..17b4a80 100644
 +    }
 +
      static bool HasAnyKey(KeyBindings cfg) =>
-@@ -294,6 +357,9 @@ internal static unsafe class InputManager
+         cfg.Cross.Length > 0 || cfg.Circle.Length > 0 || cfg.Square.Length > 0 || cfg.Triangle.Length > 0 ||
+         cfg.L1.Length > 0 || cfg.R1.Length > 0 || cfg.L2.Length > 0 || cfg.R2.Length > 0 ||
+@@ -228,6 +374,18 @@ internal static unsafe class InputManager
+             Controller.RightX = AxisToByte(_sdl.GameControllerGetAxis(_pad0, GameControllerAxis.Rightx));
+             Controller.RightY = AxisToByte(_sdl.GameControllerGetAxis(_pad0, GameControllerAxis.Righty));
+         }
++        else if (_joy0 != null)
++        {
++            Controller.State = JoystickState(_joy0, ConfigManager.Game.Pad, Controller.State);
++            Controller.LeftX = AxisToByte(GetJoystickAxis(_joy0, 0));
++            Controller.LeftY = AxisToByte(GetJoystickAxis(_joy0, 1));
++            Controller.RightX = AxisToByte(GetJoystickAxis(_joy0, 2));
++            Controller.RightY = AxisToByte(GetJoystickAxis(_joy0, 3));
++        }
++        else
++        {
++            Controller.RightX = Controller.RightY = 0x80;
++        }
+ 
+         if (_pad1 != null)
+         {
+@@ -237,6 +395,14 @@ internal static unsafe class InputManager
+             Controller.RightX2 = AxisToByte(_sdl.GameControllerGetAxis(_pad1, GameControllerAxis.Rightx));
+             Controller.RightY2 = AxisToByte(_sdl.GameControllerGetAxis(_pad1, GameControllerAxis.Righty));
+         }
++        else if (_joy1 != null)
++        {
++            Controller.State2 = JoystickState(_joy1, ConfigManager.Game.Pad2, Controller.State2);
++            Controller.LeftX2 = AxisToByte(GetJoystickAxis(_joy1, 0));
++            Controller.LeftY2 = AxisToByte(GetJoystickAxis(_joy1, 1));
++            Controller.RightX2 = AxisToByte(GetJoystickAxis(_joy1, 2));
++            Controller.RightY2 = AxisToByte(GetJoystickAxis(_joy1, 3));
++        }
+         else
+         {
+             Controller.LeftX2 = Controller.LeftY2 = Controller.RightX2 = Controller.RightY2 = 0x80;
+@@ -288,12 +454,194 @@ internal static unsafe class InputManager
+         return _sdl.GameControllerGetButton(ctrl, (GameControllerButton)binding) != 0;
+     }
+ 
++    static GamepadBindings GenericJoystickBindings() => new()
++    {
++        Cross = [RawButtonBase],
++        Circle = [RawButtonBase + 1],
++        Square = [RawButtonBase + 2],
++        Triangle = [RawButtonBase + 3],
++        L1 = [RawButtonBase + 4],
++        R1 = [RawButtonBase + 5],
++        L2 = [RawButtonBase + 6],
++        R2 = [RawButtonBase + 7],
++        L3 = [RawButtonBase + 8],
++        R3 = [RawButtonBase + 9],
++        Start = [RawButtonBase + 10],
++        Select = [RawButtonBase + 11],
++        Up = [RawHatBase + HatUp],
++        Right = [RawHatBase + HatRight],
++        Down = [RawHatBase + HatDown],
++        Left = [RawHatBase + HatLeft],
++    };
++
++    static ushort JoystickState(Joystick* joy, GamepadBindings pad, ushort state)
++    {
++        state = ApplyJoystick(joy, pad.Cross, Controller.Cross, state);
++        state = ApplyJoystick(joy, pad.Circle, Controller.Circle, state);
++        state = ApplyJoystick(joy, pad.Square, Controller.Square, state);
++        state = ApplyJoystick(joy, pad.Triangle, Controller.Triangle, state);
++        state = ApplyJoystick(joy, pad.L1, Controller.L1, state);
++        state = ApplyJoystick(joy, pad.R1, Controller.R1, state);
++        state = ApplyJoystick(joy, pad.L2, Controller.L2, state);
++        state = ApplyJoystick(joy, pad.R2, Controller.R2, state);
++        state = ApplyJoystick(joy, pad.L3, Controller.L3, state);
++        state = ApplyJoystick(joy, pad.R3, Controller.R3, state);
++        state = ApplyJoystick(joy, pad.Start, Controller.Start, state);
++        state = ApplyJoystick(joy, pad.Select, Controller.Select, state);
++        state = ApplyJoystick(joy, pad.Up, Controller.Up, state);
++        state = ApplyJoystick(joy, pad.Down, Controller.Down, state);
++        state = ApplyJoystick(joy, pad.Left, Controller.Left, state);
++        return ApplyJoystick(joy, pad.Right, Controller.Right, state);
++    }
++
++    static ushort ApplyJoystick(Joystick* joy, int[] bindings, ushort bit, ushort state)
++    {
++        foreach (int binding in bindings)
++            if (Pressed(joy, binding))
++                return (ushort)(state & ~bit);
++        return state;
++    }
++
++    static bool Pressed(Joystick* joy, int binding)
++    {
++        if (_sdl == null) return false;
++        if (binding == LeftTrigger || binding == RightTrigger)
++        {
++            short trigger = GetJoystickAxis(joy, binding == LeftTrigger ? 4 : 5);
++            return trigger > AxisThreshold;
++        }
++        if (IsStickBinding(binding))
++        {
++            int offset = binding - LeftStickLeft;
++            short value = GetJoystickAxis(joy, offset / 2);
++            bool positive = (offset & 1) != 0;
++            return positive ? value > StickThreshold : value < -StickThreshold;
++        }
++        if (binding >= 0 && binding < _sdl.JoystickNumButtons(joy))
++            return _sdl.JoystickGetButton(joy, binding) != 0;
++        if (binding >= RawButtonBase && binding < RawAxisBase)
++            return binding - RawButtonBase < _sdl.JoystickNumButtons(joy) &&
++                _sdl.JoystickGetButton(joy, binding - RawButtonBase) != 0;
++        if (binding >= RawAxisBase && binding < RawHatBase)
++        {
++            int offset = binding - RawAxisBase;
++            int axis = offset / 2;
++            bool positive = (offset & 1) != 0;
++            short value = GetJoystickAxis(joy, axis);
++            return positive ? value > StickThreshold : value < -StickThreshold;
++        }
++        if (binding >= RawHatBase)
++        {
++            int offset = binding - RawHatBase;
++            int hat = offset / 16;
++            int direction = offset % 16;
++            if (hat >= _sdl.JoystickNumHats(joy)) return false;
++            return (_sdl.JoystickGetHat(joy, hat) & direction) != 0;
++        }
++        return false;
++    }
++
++    static List<int> GetActiveJoystickInputs(Joystick* joy)
++    {
++        var active = new List<int>();
++        if (_sdl == null) return active;
++        for (int button = 0; button < _sdl.JoystickNumButtons(joy); button++)
++            if (_sdl.JoystickGetButton(joy, button) != 0)
++                active.Add(RawButtonBase + button);
++        for (int axis = 0; axis < Math.Min(_sdl.JoystickNumAxes(joy), 8); axis++)
++        {
++            short value = GetJoystickAxis(joy, axis);
++            if (value < -StickThreshold) active.Add(RawAxisBase + axis * 2);
++            else if (value > StickThreshold) active.Add(RawAxisBase + axis * 2 + 1);
++        }
++        for (int hat = 0; hat < Math.Min(_sdl.JoystickNumHats(joy), 4); hat++)
++        {
++            byte value = _sdl.JoystickGetHat(joy, hat);
++            foreach (byte direction in new[] { HatUp, HatRight, HatDown, HatLeft })
++                if ((value & direction) != 0)
++                    active.Add(RawHatBase + hat * 16 + direction);
++        }
++        return active;
++    }
++
++    static int? GetFirstPressedJoystickInput(Joystick* joy)
++    {
++        var active = GetActiveJoystickInputs(joy);
++        return active.Count == 0 ? null : active[0];
++    }
++
++    static short GetJoystickAxis(Joystick* joy, int axis) =>
++        _sdl != null && axis >= 0 && axis < _sdl.JoystickNumAxes(joy)
++            ? _sdl.JoystickGetAxis(joy, axis)
++            : (short)0;
++
++    static void PollMouse()
++    {
++        if (_mouse == null) return;
++        MouseBindings mouse = ConfigManager.Game.Mouse;
++        MouseBindings mouse2 = ConfigManager.Game.Mouse2;
++        Controller.State = ApplyMouse(mouse, Controller.State);
++        Controller.State2 = ApplyMouse(mouse2, Controller.State2);
++
++        int mouseDeltaX = Interlocked.Exchange(ref _mouseDeltaX, 0);
++        if (!ConfigManager.Game.MouseSteeringEnabled || _pad0 != null || _joy0 != null)
++            return;
++
++        float delta = mouseDeltaX *
++            Math.Clamp(ConfigManager.Game.MouseSteeringSensitivity, 0.001f, 0.1f);
++        float deadzone = Math.Clamp(ConfigManager.Game.MouseSteeringDeadzone, 0f, 0.75f);
++        float normalized = Math.Clamp(delta, -1f, 1f);
++        if (MathF.Abs(normalized) < deadzone) normalized = 0f;
++        Controller.LeftX = (byte)Math.Clamp(
++            (int)MathF.Round((normalized + 1f) * 127.5f), 0, 255);
++    }
++
++    static ushort ApplyMouse(MouseBindings mouse, ushort state)
++    {
++        state = ApplyMouse(mouse.Cross, Controller.Cross, state);
++        state = ApplyMouse(mouse.Circle, Controller.Circle, state);
++        state = ApplyMouse(mouse.Square, Controller.Square, state);
++        state = ApplyMouse(mouse.Triangle, Controller.Triangle, state);
++        state = ApplyMouse(mouse.L1, Controller.L1, state);
++        state = ApplyMouse(mouse.R1, Controller.R1, state);
++        state = ApplyMouse(mouse.L2, Controller.L2, state);
++        state = ApplyMouse(mouse.R2, Controller.R2, state);
++        state = ApplyMouse(mouse.L3, Controller.L3, state);
++        state = ApplyMouse(mouse.R3, Controller.R3, state);
++        state = ApplyMouse(mouse.Start, Controller.Start, state);
++        state = ApplyMouse(mouse.Select, Controller.Select, state);
++        state = ApplyMouse(mouse.Up, Controller.Up, state);
++        state = ApplyMouse(mouse.Down, Controller.Down, state);
++        state = ApplyMouse(mouse.Left, Controller.Left, state);
++        return ApplyMouse(mouse.Right, Controller.Right, state);
++    }
++
++    static ushort ApplyMouse(int[] bindings, ushort bit, ushort state)
++    {
++        foreach (int binding in bindings)
++        {
++            bool pressed = binding switch
++            {
++                MouseWheelUp => _frameWheel > 0,
++                MouseWheelDown => _frameWheel < 0,
++                _ => Enum.IsDefined(typeof(MouseButton), binding) &&
++                    (MouseButton)binding != MouseButton.Unknown &&
++                    (_mouse?.IsButtonPressed((MouseButton)binding) ?? false)
++            };
++            if (pressed) return (ushort)(state & ~bit);
++        }
++        return state;
++    }
++
+     static byte AxisToByte(short axis)
+     {
+         float f = Math.Clamp(axis * 1.3f / 32768.0f, -1.0f, 1.0f);
          return (byte)Math.Clamp((int)MathF.Round((f + 1.0f) * 127.5f), 0, 255);
      }
  
@@ -624,6 +1045,26 @@ index 928d144..17b4a80 100644
      public static void SetRumble(byte large, byte small)
      {
          if (_sdl == null || _pad0 == null) return;
+@@ -330,6 +678,11 @@ internal static unsafe class InputManager
+ 
+     static void OnMouseMove(IMouse mouse, Vector2 position)
+     {
++        if (_hasMousePosition)
++            Interlocked.Add(ref _mouseDeltaX, (int)MathF.Round(position.X - _lastMousePosition.X));
++        _lastMousePosition = position;
++        _hasMousePosition = true;
++
+         if (EventBus.HasAnyListeners<MouseEvent>())
+         {
+             EventBus.Dispatch(new MouseEvent
+@@ -373,6 +726,7 @@ internal static unsafe class InputManager
+     
+     static void OnScroll(IMouse mouse, ScrollWheel wheel)
+     {
++        Interlocked.Add(ref _pendingWheel, (int)MathF.Sign(wheel.Y));
+         if (EventBus.HasAnyListeners<MouseEvent>())
+         {
+             EventBus.Dispatch(new MouseEvent
 diff --git a/RecompOne.Runtime/Host/Window/HostWindow.cs b/RecompOne.Runtime/Host/Window/HostWindow.cs
 index 4a3da3d..825514f 100644
 --- a/RecompOne.Runtime/Host/Window/HostWindow.cs
@@ -808,6 +1249,449 @@ index 4223d9c..914b819 100644
      public void Draw()
      {
          if (!IsOpen) return;
+diff --git a/RecompOne.Runtime/Host/Window/Settings/Sections/InputSettingsSection.cs b/RecompOne.Runtime/Host/Window/Settings/Sections/InputSettingsSection.cs
+index 0051c14..0c3c80a 100644
+--- a/RecompOne.Runtime/Host/Window/Settings/Sections/InputSettingsSection.cs
++++ b/RecompOne.Runtime/Host/Window/Settings/Sections/InputSettingsSection.cs
+@@ -31,10 +31,34 @@ internal sealed class InputSettingsSection : ISettingsSection
+         ("Right", b => b.Right, (b,v) => b.Right = v, p => p.Right, (p,v) => p.Right = v),
+     ];
+ 
++    static readonly (string Label, Func<MouseBindings, int[]> Get, Action<MouseBindings, int[]> Set)[] _mouseRows =
++    [
++        ("Cross", b => b.Cross, (b,v) => b.Cross = v),
++        ("Circle", b => b.Circle, (b,v) => b.Circle = v),
++        ("Square", b => b.Square, (b,v) => b.Square = v),
++        ("Triangle", b => b.Triangle, (b,v) => b.Triangle = v),
++        ("L1", b => b.L1, (b,v) => b.L1 = v),
++        ("R1", b => b.R1, (b,v) => b.R1 = v),
++        ("L2", b => b.L2, (b,v) => b.L2 = v),
++        ("R2", b => b.R2, (b,v) => b.R2 = v),
++        ("L3", b => b.L3, (b,v) => b.L3 = v),
++        ("R3", b => b.R3, (b,v) => b.R3 = v),
++        ("Start", b => b.Start, (b,v) => b.Start = v),
++        ("Select", b => b.Select, (b,v) => b.Select = v),
++        ("Up", b => b.Up, (b,v) => b.Up = v),
++        ("Down", b => b.Down, (b,v) => b.Down = v),
++        ("Left", b => b.Left, (b,v) => b.Left = v),
++        ("Right", b => b.Right, (b,v) => b.Right = v),
++    ];
++
++    static readonly string[] _padLayouts = ["Auto", "PlayStation", "Xbox", "Nintendo Switch", "Generic"];
++
+     bool _gamepadMode;
++    bool _mouseMode;
+     int _padIndex;
+     int _remapRow = -1;
+     bool _remapAdd;
++    bool _mouseCaptureWaitingForRelease;
+ 
+     public void Draw()
+     {
+@@ -51,68 +75,83 @@ internal sealed class InputSettingsSection : ISettingsSection
+             ImGui.Spacing();
+         }
+ 
+-        DrawBindings();
++        if (_mouseMode) DrawMouseBindings();
++        else DrawBindings();
+ 
+         ImGui.Spacing();
+         if (ImGui.Button("Reset to Defaults"))
+         {
+-            if (!_gamepadMode)
++            if (_mouseMode)
++            {
++                if (_padIndex == 0) ConfigManager.Game.Mouse = new MouseBindings();
++                else ConfigManager.Game.Mouse2 = new MouseBindings();
++            }
++            else if (!_gamepadMode)
+             {
+                 if (_padIndex == 0) ConfigManager.Game.Keys = new KeyBindings();
+                 else ConfigManager.Game.Keys2 = KeyBindings.Empty();
+             }
+-            else
++            else if (InputManager.IsPadConnected(_padIndex))
+             {
+-                if (_padIndex == 0) ConfigManager.Game.Pad = new GamepadBindings();
+-                else ConfigManager.Game.Pad2 = GamepadBindings.Empty();
++                InputManager.ApplyStandardGamepadMapping(_padIndex);
+             }
++            else if (_padIndex == 0) ConfigManager.Game.Pad = new GamepadBindings();
++            else ConfigManager.Game.Pad2 = GamepadBindings.Empty();
++
+             _remapRow = -1;
++            _mouseCaptureWaitingForRelease = false;
+             ConfigManager.SaveGame();
+         }
+     }
+ 
+     void DrawDeviceSelector()
+     {
+-        if (ImGui.BeginTabBar("##input-device"))
++        if (!ImGui.BeginTabBar("##input-device")) return;
++        if (ImGui.BeginTabItem("Keyboard"))
+         {
+-            if (ImGui.BeginTabItem("Keyboard"))
+-            {
+-                if (_gamepadMode) _remapRow = -1;
+-                _gamepadMode = false;
+-                ImGui.EndTabItem();
+-            }
+-            if (ImGui.BeginTabItem("Gamepad"))
+-            {
+-                if (!_gamepadMode) _remapRow = -1;
+-                _gamepadMode = true;
+-                ImGui.EndTabItem();
+-            }
+-            ImGui.EndTabBar();
++            if (_gamepadMode || _mouseMode) _remapRow = -1;
++            _gamepadMode = false;
++            _mouseMode = false;
++            ImGui.EndTabItem();
+         }
++        if (ImGui.BeginTabItem("Gamepad"))
++        {
++            if (!_gamepadMode) _remapRow = -1;
++            _gamepadMode = true;
++            _mouseMode = false;
++            ImGui.EndTabItem();
++        }
++        if (ImGui.BeginTabItem("Mouse"))
++        {
++            if (!_mouseMode) _remapRow = -1;
++            _gamepadMode = false;
++            _mouseMode = true;
++            ImGui.EndTabItem();
++        }
++        ImGui.EndTabBar();
+     }
+ 
+     void DrawPadSelector()
+     {
+-        if (ImGui.BeginTabBar("##input-pad"))
++        if (!ImGui.BeginTabBar("##input-pad")) return;
++        if (ImGui.BeginTabItem("Pad 1"))
+         {
+-            if (ImGui.BeginTabItem("Pad 1"))
+-            {
+-                if (_padIndex != 0) _remapRow = -1;
+-                _padIndex = 0;
+-                ImGui.EndTabItem();
+-            }
+-            if (ImGui.BeginTabItem("Pad 2"))
+-            {
+-                if (_padIndex != 1) _remapRow = -1;
+-                _padIndex = 1;
+-                ImGui.EndTabItem();
+-            }
+-            ImGui.EndTabBar();
++            if (_padIndex != 0) _remapRow = -1;
++            _padIndex = 0;
++            ImGui.EndTabItem();
++        }
++        if (ImGui.BeginTabItem("Pad 2"))
++        {
++            if (_padIndex != 1) _remapRow = -1;
++            _padIndex = 1;
++            ImGui.EndTabItem();
+         }
++        ImGui.EndTabBar();
+     }
+ 
+     void DrawBindings()
+     {
++        if (_gamepadMode) DrawControllerLayout();
+         if (!ImGui.BeginTable("##bindings", 2,
+                 ImGuiTableFlags.Borders | ImGuiTableFlags.RowBg | ImGuiTableFlags.SizingStretchProp))
+             return;
+@@ -123,25 +162,23 @@ internal sealed class InputSettingsSection : ISettingsSection
+ 
+         var keys = _padIndex == 0 ? ConfigManager.Game.Keys : ConfigManager.Game.Keys2;
+         var pad = _padIndex == 0 ? ConfigManager.Game.Pad : ConfigManager.Game.Pad2;
++        string layout = GetActiveLayout();
+ 
+         for (int i = 0; i < _rows.Length; i++)
+         {
+             var (label, getKey, setKey, getPad, setPad) = _rows[i];
+             ImGui.TableNextRow();
+-
+             ImGui.TableSetColumnIndex(0);
+             ImGui.TextUnformatted(label);
+-
+             ImGui.TableSetColumnIndex(1);
+-            bool awaiting = _remapRow == i;
+ 
++            bool awaiting = _remapRow == i;
+             if (_gamepadMode)
+             {
+                 var bindings = getPad(pad);
+                 string text = awaiting
+                     ? _remapAdd ? "[press button to add...]" : "[press button...]"
+-                    : bindings.Length == 0 ? "unbound" : string.Join(" | ", bindings.Select(PadLabel));
+-
++                    : bindings.Length == 0 ? "unbound" : string.Join(" | ", bindings.Select(b => PadLabel(b, layout)));
+                 float plusW = ImGui.GetFrameHeight();
+                 float spacing = ImGui.GetStyle().ItemSpacing.X;
+                 if (ImGui.Button($"{text}##p{i}", new Vector2(-plusW - spacing, 0)))
+@@ -155,17 +192,16 @@ internal sealed class InputSettingsSection : ISettingsSection
+                     _remapRow = i;
+                     _remapAdd = true;
+                 }
+-
+                 if (awaiting)
+                 {
+-                    var p = InputManager.GetFirstPressedPadButton(_padIndex);
+-                    if (p.HasValue)
++                    var input = InputManager.GetFirstPressedPadButton(_padIndex);
++                    if (input.HasValue)
+                     {
+                         if (_remapAdd)
+                         {
+-                            if (!bindings.Contains(p.Value)) setPad(pad, [.. bindings, p.Value]);
++                            if (!bindings.Contains(input.Value)) setPad(pad, [.. bindings, input.Value]);
+                         }
+-                        else setPad(pad, [p.Value]);
++                        else setPad(pad, [input.Value]);
+                         _remapRow = -1;
+                         ConfigManager.SaveGame();
+                     }
+@@ -178,31 +214,204 @@ internal sealed class InputSettingsSection : ISettingsSection
+                 if (ImGui.Button(text, new Vector2(-1, 0))) _remapRow = i;
+                 if (awaiting)
+                 {
+-                    var p = GetPressedKey();
+-                    if (p != null) { setKey(keys, p); _remapRow = -1; ConfigManager.SaveGame(); }
++                    var input = GetPressedKey();
++                    if (input != null)
++                    {
++                        setKey(keys, input);
++                        _remapRow = -1;
++                        ConfigManager.SaveGame();
++                    }
+                 }
+             }
+         }
+-
+         ImGui.EndTable();
+     }
+ 
++    void DrawControllerLayout()
++    {
++        var snapshot = RecompOne.Runtime.Runtime.GetGamepadSnapshot(_padIndex);
++        ImGui.TextWrapped(snapshot.Connected
++            ? $"Connected: {snapshot.Name}"
++            : "Connect a controller for automatic detection; unrecognized USB gamepads can be bound manually.");
++
++        string layout = _padIndex == 0 ? ConfigManager.Game.PadLayout : ConfigManager.Game.Pad2Layout;
++        int selected = Array.IndexOf(_padLayouts, layout);
++        if (selected < 0) selected = 0;
++        if (ImGui.BeginCombo("Button labels", _padLayouts[selected]))
++        {
++            for (int i = 0; i < _padLayouts.Length; i++)
++            {
++                bool isSelected = selected == i;
++                if (ImGui.Selectable(_padLayouts[i], isSelected))
++                {
++                    if (_padIndex == 0) ConfigManager.Game.PadLayout = _padLayouts[i];
++                    else ConfigManager.Game.Pad2Layout = _padLayouts[i];
++                    ConfigManager.SaveGame();
++                }
++                if (isSelected) ImGui.SetItemDefaultFocus();
++            }
++            ImGui.EndCombo();
++        }
++
++        if (snapshot.Connected && snapshot.Name.StartsWith("Generic joystick:", StringComparison.Ordinal))
++            ImGui.TextWrapped("This device has no SDL controller profile. Its buttons, axes and hats remain available for manual binding.");
++    }
++
++    void DrawMouseBindings()
++    {
++        if (ImGui.BeginTable("##mouse-bindings", 2,
++                ImGuiTableFlags.Borders | ImGuiTableFlags.RowBg | ImGuiTableFlags.SizingStretchProp))
++        {
++            ImGui.TableSetupColumn("Button", ImGuiTableColumnFlags.WidthFixed, 90);
++            ImGui.TableSetupColumn("Mouse", ImGuiTableColumnFlags.WidthStretch);
++            ImGui.TableHeadersRow();
++
++            var mouse = _padIndex == 0 ? ConfigManager.Game.Mouse : ConfigManager.Game.Mouse2;
++            for (int i = 0; i < _mouseRows.Length; i++)
++            {
++                var (label, get, set) = _mouseRows[i];
++                ImGui.TableNextRow();
++                ImGui.TableSetColumnIndex(0);
++                ImGui.TextUnformatted(label);
++                ImGui.TableSetColumnIndex(1);
++
++                var bindings = get(mouse);
++                bool awaiting = _remapRow == i;
++                string text = awaiting
++                    ? _remapAdd ? "[press mouse input to add...]" : "[press mouse input...]"
++                    : bindings.Length == 0 ? "unbound" : string.Join(" | ", bindings.Select(MouseLabel));
++                float plusW = ImGui.GetFrameHeight();
++                float spacing = ImGui.GetStyle().ItemSpacing.X;
++                if (ImGui.Button($"{text}##m{i}", new Vector2(-plusW - spacing, 0)))
++                {
++                    _remapRow = i;
++                    _remapAdd = false;
++                    _mouseCaptureWaitingForRelease = true;
++                }
++                ImGui.SameLine();
++                if (ImGui.Button($"+##mouse-add{i}", new Vector2(plusW, 0)))
++                {
++                    _remapRow = i;
++                    _remapAdd = true;
++                    _mouseCaptureWaitingForRelease = true;
++                }
++
++                if (!awaiting) continue;
++                if (_mouseCaptureWaitingForRelease)
++                {
++                    if (!InputManager.IsMouseButtonDown) _mouseCaptureWaitingForRelease = false;
++                    continue;
++                }
++                int? input = InputManager.GetFirstPressedMouseInput();
++                if (!input.HasValue) continue;
++                if (_remapAdd)
++                {
++                    if (!bindings.Contains(input.Value)) set(mouse, [.. bindings, input.Value]);
++                }
++                else set(mouse, [input.Value]);
++                _remapRow = -1;
++                ConfigManager.SaveGame();
++            }
++            ImGui.EndTable();
++        }
++
++        ImGui.Spacing();
++        if (_padIndex != 0)
++        {
++            ImGui.TextWrapped("Mouse steering is available for Pad 1; mouse buttons and wheel can be mapped to either pad.");
++            return;
++        }
++
++        bool steering = ConfigManager.Game.MouseSteeringEnabled;
++        if (ImGui.Checkbox("Enable mouse steering", ref steering))
++        {
++            ConfigManager.Game.MouseSteeringEnabled = steering;
++            ConfigManager.SaveGame();
++        }
++        ImGui.BeginDisabled(!steering);
++        float sensitivity = ConfigManager.Game.MouseSteeringSensitivity;
++        if (ImGui.SliderFloat("Steering sensitivity", ref sensitivity, 0.001f, 0.1f, "%.3f"))
++        {
++            ConfigManager.Game.MouseSteeringSensitivity = sensitivity;
++            ConfigManager.SaveGame();
++        }
++        float deadzone = ConfigManager.Game.MouseSteeringDeadzone;
++        if (ImGui.SliderFloat("Steering deadzone", ref deadzone, 0f, 0.75f, "%.2f"))
++        {
++            ConfigManager.Game.MouseSteeringDeadzone = deadzone;
++            ConfigManager.SaveGame();
++        }
++        ImGui.EndDisabled();
++        ImGui.TextWrapped("Mouse steering uses horizontal mouse movement and is off by default.");
++    }
++
++    string GetActiveLayout()
++    {
++        string selected = _padIndex == 0 ? ConfigManager.Game.PadLayout : ConfigManager.Game.Pad2Layout;
++        if (selected != "Auto") return selected;
++        string name = RecompOne.Runtime.Runtime.GetGamepadSnapshot(_padIndex).Name;
++        if (name.Contains("switch", StringComparison.OrdinalIgnoreCase) ||
++            name.Contains("nintendo", StringComparison.OrdinalIgnoreCase))
++            return "Nintendo Switch";
++        if (name.Contains("xbox", StringComparison.OrdinalIgnoreCase))
++            return "Xbox";
++        if (name.Contains("playstation", StringComparison.OrdinalIgnoreCase) ||
++            name.Contains("sony", StringComparison.OrdinalIgnoreCase) ||
++            name.Contains("dualshock", StringComparison.OrdinalIgnoreCase) ||
++            name.Contains("dualsense", StringComparison.OrdinalIgnoreCase) ||
++            name.Contains("sixaxis", StringComparison.OrdinalIgnoreCase))
++            return "PlayStation";
++        return "Generic";
++    }
++
+     static string? GetPressedKey()
+     {
+-        foreach (Key k in Enum.GetValues<Key>())
++        foreach (Key key in Enum.GetValues<Key>())
+         {
+-            if (k is Key.Unknown or Key.Menu) continue;
+-            if (InputManager.IsKeyDown(k)) return k.ToString();
++            if (key is Key.Unknown or Key.Menu) continue;
++            if (InputManager.IsKeyDown(key)) return key.ToString();
+         }
+         return null;
+     }
+ 
+-    static string PadLabel(int b) => b switch
++    static string MouseLabel(int binding) => binding switch
++    {
++        100 => "Wheel Up",
++        101 => "Wheel Down",
++        _ when Enum.IsDefined(typeof(MouseButton), binding) => ((MouseButton)binding).ToString(),
++        _ => $"Mouse input {binding}",
++    };
++
++    static string PadLabel(int binding, string layout) => binding switch
+     {
+-        0 => "Cross (A)",
+-        1 => "Circle (B)",
+-        2 => "Square (X)",
+-        3 => "Triangle (Y)",
++        0 => layout switch
++        {
++            "PlayStation" => "Cross",
++            "Nintendo Switch" => "B",
++            "Generic" => "South",
++            _ => "A",
++        },
++        1 => layout switch
++        {
++            "PlayStation" => "Circle",
++            "Nintendo Switch" => "A",
++            "Generic" => "East",
++            _ => "B",
++        },
++        2 => layout switch
++        {
++            "PlayStation" => "Square",
++            "Nintendo Switch" => "Y",
++            "Generic" => "West",
++            _ => "X",
++        },
++        3 => layout switch
++        {
++            "PlayStation" => "Triangle",
++            "Nintendo Switch" => "X",
++            "Generic" => "North",
++            _ => "Y",
++        },
+         4 => "Select (Back)",
+         5 => "Guide",
+         6 => "Start",
+@@ -224,6 +433,18 @@ internal sealed class InputSettingsSection : ISettingsSection
+         107 => "RStick Right",
+         108 => "RStick Up",
+         109 => "RStick Down",
+-        _ => $"Btn {b}",
++        >= 1000 and < 2000 => $"Button {binding - 1000 + 1}",
++        >= 2000 and < 3000 => $"Axis {(binding - 2000) / 2 + 1} {((binding & 1) == 0 ? "-" : "+")}",
++        >= 3000 => $"Hat {(binding - 3000) / 16 + 1} {HatDirection((binding - 3000) % 16)}",
++        _ => $"Btn {binding}",
++    };
++
++    static string HatDirection(int direction) => direction switch
++    {
++        1 => "Up",
++        2 => "Right",
++        4 => "Down",
++        8 => "Left",
++        _ => $"Direction {direction}",
+     };
+ }
 diff --git a/RecompOne.Runtime/Memory/Dma.cs b/RecompOne.Runtime/Memory/Dma.cs
 index c376f15..0ae08eb 100644
 --- a/RecompOne.Runtime/Memory/Dma.cs
@@ -891,7 +1775,7 @@ index c1476f7..a023923 100644
  
      private uint Hw32(uint phys)
 diff --git a/RecompOne.Runtime/Runtime.cs b/RecompOne.Runtime/Runtime.cs
-index bcefd60..e811845 100644
+index bcefd60..1fe2246 100644
 --- a/RecompOne.Runtime/Runtime.cs
 +++ b/RecompOne.Runtime/Runtime.cs
 @@ -7,6 +7,20 @@ namespace RecompOne.Runtime;
@@ -939,7 +1823,10 @@ index bcefd60..e811845 100644
      
      public static Config.ViewConfig View => Config.ConfigManager.View;
      public static void SaveView() => Config.ConfigManager.SaveView(Host.Window.PanelManager.Panels);
-@@ -30,6 +49,9 @@ public static class Runtime
+@@ -27,8 +58,11 @@ public static class Runtime
+     public static readonly Memory.RamLogger RamLog = new();
+     public static readonly Dispatch.OverlayEventLog OverlayLog = new();
+ 
 +    static bool _initialized;
      public static void Initialize(string title)
      {
@@ -948,7 +1835,6 @@ index bcefd60..e811845 100644
          Diagnostics.ConsoleMirror.Install();
          HostWindow.Initialize(title);
          Audio.Initialize();
-         Audio.SetMasterVolume(Config.ConfigManager.Game.Muted ? 0f : Config.ConfigManager.Game.MasterVolume);
 @@ -39,7 +73,55 @@ public static class Runtime
          }
      }

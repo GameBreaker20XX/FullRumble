@@ -8,10 +8,13 @@ public sealed class UserConfig
     [JsonPropertyName("discPath")]
     public string? DiscPath { get; set; }
 
-    private static string Directory =>
+    public static string DataDirectory =>
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "FullRumble");
 
-    public static string FilePath => Path.Combine(Directory, "config.json");
+    public static string FilePath => Path.Combine(DataDirectory, "config.json");
+    public static string BuildDirectory => Path.Combine(DataDirectory, "build");
+    public static string GameLibraryPath => Path.Combine(BuildDirectory, "NascarRumbleRecompLib.dll");
+    public static string BuildVersionPath => Path.Combine(BuildDirectory, "library.version");
 
     public static UserConfig Load()
     {
@@ -29,7 +32,7 @@ public sealed class UserConfig
 
     public void Save()
     {
-        System.IO.Directory.CreateDirectory(Directory);
+        System.IO.Directory.CreateDirectory(DataDirectory);
         File.WriteAllText(FilePath, JsonSerializer.Serialize(this, new JsonSerializerOptions { WriteIndented = true }));
     }
 }

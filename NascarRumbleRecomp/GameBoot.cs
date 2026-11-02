@@ -1,6 +1,7 @@
 using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Runtime.Loader;
+using FullRumble.Config;
 using RecompOne.Runtime.Memory;
 
 namespace FullRumble;
@@ -13,7 +14,6 @@ namespace FullRumble;
 /// </summary>
 internal static class GameBoot
 {
-    private const string LibraryFile = "NascarRumbleRecompLib.dll";
     private const string EntryPoint = "NascarRumble.Lib.LibEntry";
     private const int SW_HIDE = 0;
     private const int SW_SHOW = 5;
@@ -33,12 +33,11 @@ internal static class GameBoot
 
     public static int Run(string cuePath)
     {
-        string libraryPath = Path.Combine(AppContext.BaseDirectory, LibraryFile);
-        if (!File.Exists(libraryPath))
+        string libraryPath = UserConfig.GameLibraryPath;
+        if (!RecompilePipeline.HasCurrentLibrary())
         {
             Console.Error.WriteLine(
-                "The game library is not built yet. Build it from a disc you own with:");
-            Console.Error.WriteLine("    python tools/build_lib.py");
+                "The game library is not ready. Start Full Rumble again to build it from your own disc.");
             return 1;
         }
 
@@ -84,4 +83,3 @@ internal static class GameBoot
     private static string Describe(Exception error) =>
         error is TargetInvocationException { InnerException: { } inner } ? inner.ToString() : error.ToString();
 }
-
