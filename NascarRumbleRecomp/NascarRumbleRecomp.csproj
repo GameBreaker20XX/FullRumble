@@ -11,6 +11,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <ProjectReference Include="../FullRumbleUpdater/FullRumbleUpdater.csproj" />
     <ProjectReference Include="../thirdparty/RecompOne/RecompOne.Runtime/RecompOne.Runtime.csproj" />
     <ProjectReference Include="../thirdparty/RecompOne/RecompOne.Recompiler/RecompOne.Recompiler.csproj" />
   </ItemGroup>

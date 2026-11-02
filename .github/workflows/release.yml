@@ -36,6 +36,20 @@ jobs:
           "release_name=$releaseName" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
       - name: Build self-contained Windows package
         run: dotnet publish NascarRumbleRecomp -c Release -r win-x64 --self-contained true -o publish/app
+      - name: Remove updater command-line host
+        shell: pwsh
+        run: |
+          foreach ($name in @('Updater.exe', 'Updater.deps.json', 'Updater.runtimeconfig.json', 'Updater.pdb')) {
+            $path = Join-Path 'publish/app' $name
+            if (Test-Path -LiteralPath $path) { Remove-Item -LiteralPath $path -Force }
+          }
+      - name: Build native update helper
+        run: dotnet publish FullRumbleUpdater -c Release -r win-x64 --self-contained true -p:PublishAot=true -p:StripSymbols=true -p:IlcOptimizationPreference=Size -o publish/updater
+      - name: Add update helper to package
+        shell: pwsh
+        run: |
+          Copy-Item publish/updater/Updater.exe publish/app/FullRumbleUpdateHelper.exe
+          Copy-Item CONTROLS.md publish/app/CONTROLS.md
       - name: Legal lint (repository tree)
         run: python tools/legal_lint.py .
       - name: Stage archive

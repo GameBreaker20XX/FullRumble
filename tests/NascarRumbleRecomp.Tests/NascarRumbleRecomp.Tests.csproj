@@ -13,6 +13,7 @@
 
   <ItemGroup>
     <ProjectReference Include="../../NascarRumbleRecomp/NascarRumbleRecomp.csproj" />
+    <ProjectReference Include="../../FullRumbleUpdater/FullRumbleUpdater.csproj" />
   </ItemGroup>
 
 </Project>

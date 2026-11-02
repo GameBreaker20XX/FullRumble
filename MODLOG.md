@@ -65,5 +65,7 @@ launches it. Later runs reuse the cached library when its version matches the ho
   Preserve them; do not reset or discard them.
 - The main-menu boot is visually verified. In-game race play, audio, saves, and the newly added
   mouse/gamepad settings UI remain unverified.
-- The first release is planned as **Race 1.0** (technical version `0.1.0.0`, tag `v0.1.0.0`).
-  Technical version `0.2.0.0` maps to **Race 1.1**. No release tag or GitHub release has been created.
+- **Race 1.0** was published as technical version `0.1.0.0` (tag `v0.1.0.0`).
+- Technical version `0.2.0.0` maps to **Race 1.1**. The in-game Updates settings page prepares
+  checksum-verified updates and schedules the Native AOT helper to apply them after exit. No Race 1.1
+  tag or GitHub release has been created.

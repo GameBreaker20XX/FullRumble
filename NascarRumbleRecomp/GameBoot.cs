@@ -2,7 +2,9 @@ using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Runtime.Loader;
 using FullRumble.Config;
+using FullRumble.Updater;
 using RecompOne.Runtime.Memory;
+using RecompOne.Runtime.Host.Window;
 
 namespace FullRumble;
 
@@ -44,6 +46,7 @@ internal static class GameBoot
         // Creating the memory loads RecompOne.Runtime into the default context first, so the
         // library resolves its IMemory against the same assembly the host already loaded.
         var memory = new PSMemory();
+        SettingsRegistry.Register(new UpdateSettingsSection());
         nint console = GetConsoleWindow();
         try
         {

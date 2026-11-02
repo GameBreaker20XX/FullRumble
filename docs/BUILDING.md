@@ -39,6 +39,11 @@ You can also run the helper script in `tools/publish_windows.ps1`, which creates
 extract and run directly. The executable prints the version, the no-assets notice, and whether a
 disc is configured in `%APPDATA%\FullRumble\config.json`.
 
+The host provides an in-game **Settings > Updates** page. The package script also publishes
+`FullRumbleUpdater` as a standalone Windows x64 Native AOT helper (`FullRumbleUpdateHelper.exe`), which
+waits for the game to close before replacing installed files and relaunching it. Players do not need to
+install .NET. `CONTROLS.md` is copied into the package as a player-facing controls reference.
+
 ## Legal lint (local)
 
 ```

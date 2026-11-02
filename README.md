@@ -2,9 +2,6 @@
  <img width="1536" height="672" alt="NASCAR Full Rumble" src="https://github.com/user-attachments/assets/b86ccb27-2c5a-4e88-90f9-7c1a8d69e3f5" />
 <img width="32" height="32" alt="NASCAR Full Rumble 32" src="https://github.com/user-attachments/assets/64effb20-85c7-46bc-b4f4-bc4872ef793b" />
 
-
-
-
 Full Rumble is a native Windows PC static recompilation of NASCAR Rumble (USA/Canada, SLUS-01068). It is built from a dump you make from a disc you own and run on your own machine.
 
 This project does not include any game assets.
@@ -57,6 +54,15 @@ The original disc dump is copied, never moved or deleted. Full Rumble stores its
 library in `%APPDATA%\FullRumble`. The released app is self-contained and does not require the .NET SDK, .NET
 runtime, Git, or Python to be installed separately.
 
+### Updating Full Rumble
+
+Open **Settings > Updates** in Full Rumble to check for a newer official stable release. The app asks before
+downloading; it verifies the package checksum and prepares the update in the background. Close Full Rumble when
+you are ready to install: a small background helper applies the update, preserves the local `disc/` folder and
+`%APPDATA%\FullRumble` settings/build cache, and reopens the game. Updates are never installed automatically,
+and prereleases are not offered. Race 1.0 users need to download and extract Race 1.1 once to get the in-app
+updater.
+
 ## Input settings
 
 Open **Settings > Input** to remap keyboard, gamepad, and mouse controls for either player. SDL automatically
@@ -66,6 +72,9 @@ you choose how button labels are displayed. The Mouse tab supports mouse buttons
 optional horizontal mouse steering disabled by default.
 
 ### Default controls (Player 1)
+
+The complete keyboard, standard controller, generic USB joystick, mouse, and Player 2 reference is in
+[CONTROLS.md](CONTROLS.md) (also included in the Windows ZIP).
 
 | Game action | Keyboard | Standard gamepad | Generic USB joystick* |
 |---|---|---|---|
@@ -81,10 +90,10 @@ optional horizontal mouse steering disabled by default.
 | R3 | G | Right stick click | Button 10 |
 | Start | Enter | Start / Menu | Button 11 |
 | Select | Right Shift | Select / Back / View | Button 12 |
-| Up | Up Arrow | D-pad Up | Hat 0 Up |
-| Down | Down Arrow | D-pad Down | Hat 0 Down |
-| Left | Left Arrow | D-pad Left | Hat 0 Left |
-| Right | Right Arrow | D-pad Right | Hat 0 Right |
+| Up | Up Arrow | D-pad Up | Hat 1 Up |
+| Down | Down Arrow | D-pad Down | Hat 1 Down |
+| Left | Left Arrow | D-pad Left | Hat 1 Left |
+| Right | Right Arrow | D-pad Right | Hat 1 Right |
 
 *For an unrecognized USB joystick, connect it and choose **Reset to Defaults** in the Gamepad tab to apply
 the generic button/hat map. The default mouse bindings are unassigned; horizontal mouse steering is off.
@@ -121,11 +130,24 @@ See [docs/DUMPING.md](docs/DUMPING.md) for the accepted input formats and how to
 
 ## Release policy
 
-The public release name is separate from the four-part technical file version. The first release is
-**Race 1.0** (technical version `0.1.0.0`, tag `v0.1.0.0`); the next planned release is **Race 1.1**
-(technical version `0.2.0.0`, tag `v0.2.0.0`). Builds are distributed only on the official GitHub Releases
-page. This project does not include any game assets, and all derived output is generated on the player's
-machine from a disc they own.
+The public release name is separate from the four-part technical file version. **Race 1.1** is technical
+version `0.2.0.0` (tag `v0.2.0.0`); **Race 1.0** was `0.1.0.0` (tag `v0.1.0.0`). Builds are
+distributed only on the official GitHub Releases page. This project does not include any game assets, and
+all derived output is generated on the player's machine from a disc they own.
+
+## Changelog
+
+### Race 1.1 — technical version 0.2.0.0
+
+- Added an in-game **Settings > Updates** page for checking and installing newer stable releases.
+- Update downloads are checksum-verified; a background helper preserves the player's staged `disc/` folder
+  and restarts Full Rumble after the player closes it.
+- Added the standalone controls reference in `CONTROLS.md` and included it in the Windows package.
+
+### Race 1.0 — technical version 0.1.0.0
+
+- First self-contained Windows release with first-run disc selection and local recompilation.
+- Added keyboard, gamepad, and mouse remapping with generic USB joystick support.
 
 ## Legal disclaimer
 
