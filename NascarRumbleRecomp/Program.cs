@@ -3,11 +3,9 @@ using FullRumble;
 using FullRumble.Config;
 using FullRumble.Disc;
 
-string version = Assembly.GetEntryAssembly()!.GetName().Version?.ToString(3) ?? "0.0.0";
-
 if (args.Length > 0 && args[0] == "--version")
 {
-    Console.WriteLine($"Full Rumble {version}");
+    Console.WriteLine($"Full Rumble {ProductInfo.ReleaseName}");
     return 0;
 }
 

@@ -116,9 +116,11 @@ See [docs/DUMPING.md](docs/DUMPING.md) for the accepted input formats and how to
 
 ## Release policy
 
-The first release is titled **Race 1.0** and uses tag `v1.0.0`. Builds are distributed only on the official
-GitHub Releases page. This project does not include any game assets, and all derived output is generated on
-the player's machine from a disc they own.
+The public release name is separate from the four-part technical file version. The first release is
+**Race 1.0** (technical version `0.1.0.0`, tag `v0.1.0.0`); the next planned release is **Race 1.1**
+(technical version `0.2.0.0`, tag `v0.2.0.0`). Builds are distributed only on the official GitHub Releases
+page. This project does not include any game assets, and all derived output is generated on the player's
+machine from a disc they own.
 
 ## Legal disclaimer
 

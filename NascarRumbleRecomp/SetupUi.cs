@@ -247,7 +247,7 @@ internal static class SetupUi
         SendMessageW(GetDlgItem(hwnd, IdLog), WM_SETFONT, _font, 1);
         Button(IdSkip, "Skip for now", BS_OWNERDRAW | WS_TABSTOP);
         Static(IdHint, "You can add the disc later from this screen, or with:  FullRumble --set-disc PATH", 0, _font);
-        Static(IdVersion, $"Full Rumble {Version}", 0x00000002, _font);
+        Static(IdVersion, $"Full Rumble {ProductInfo.ReleaseName}", 0x00000002, _font);
 
         SendMessageW(GetDlgItem(hwnd, IdShowLog), BM_SETCHECK, 1, 0);
         DragAcceptFiles(hwnd, true);
@@ -522,9 +522,6 @@ internal static class SetupUi
     };
 
     private static uint Rgb(int r, int g, int b) => (uint)(r | g << 8 | b << 16);
-
-    private static string Version =>
-        System.Reflection.Assembly.GetEntryAssembly()?.GetName().Version?.ToString(3) ?? "0.0.0";
 
     private static string? OpenFile(nint owner)
     {

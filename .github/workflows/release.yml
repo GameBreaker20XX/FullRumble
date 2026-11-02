@@ -22,12 +22,15 @@ jobs:
           git -C $submodule apply --unidiff-zero $patch
           if ($LASTEXITCODE -ne 0) { throw 'Failed to apply the pinned Full Rumble runtime patch.' }
       - name: Check tag matches version source of truth
+        id: version
         shell: pwsh
         run: |
           $props = Get-Content Directory.Build.props -Raw
           $version = ([regex]'<Version>([^<]+)</Version>').Match($props).Groups[1].Value
+          $releaseName = ([regex]'<ReleaseName>([^<]+)</ReleaseName>').Match($props).Groups[1].Value
           $tag = "${{ github.ref_name }}"
           if ("v$version" -ne $tag) { throw "tag $tag does not match Directory.Build.props version $version" }
+          "release_name=$releaseName" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
       - name: Build self-contained Windows package
         run: dotnet publish NascarRumbleRecomp -c Release -r win-x64 --self-contained true -o publish/app
       - name: Legal lint (repository tree)
@@ -47,7 +50,7 @@ jobs:
       - name: Publish release
         uses: softprops/action-gh-release@v2
         with:
-          name: Race 1.0
+          name: ${{ steps.version.outputs.release_name }}
           files: |
             publish/FullRumble-Windows.zip
             publish/SHA256SUMS

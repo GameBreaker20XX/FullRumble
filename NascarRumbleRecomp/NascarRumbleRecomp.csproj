@@ -20,6 +20,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <AssemblyMetadata Include="FullRumble.ReleaseName" Value="$(ReleaseName)" />
     <Content Include="../NascarRumbleRecompLib/config/nascar.json"
              Link="recompile/config/nascar.json"
              CopyToOutputDirectory="PreserveNewest"
