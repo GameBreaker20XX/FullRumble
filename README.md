@@ -88,8 +88,8 @@ The complete keyboard, standard controller, generic USB joystick, mouse, and Pla
 | R2 | R | R2 / RT / ZR| Button 8 |
 | L3 | F | Left stick click | Button 9 |
 | R3 | G | Right stick click | Button 10 |
-| Start | Enter | Start / Menu | Button 11 |
-| Select | Right Shift | Select / Back / View | Button 12 |
+| Start | Enter | Start / Menu / +| Button 11 |
+| Select | Right Shift | Select / Back / View / -| Button 12 |
 | Up | Up Arrow | D-pad Up | Hat 1 Up |
 | Down | Down Arrow | D-pad Down | Hat 1 Down |
 | Left | Left Arrow | D-pad Left | Hat 1 Left |
